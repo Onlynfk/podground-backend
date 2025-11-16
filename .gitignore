@@ -1,0 +1,72 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# FastAPI/Development
+.env
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+server.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude
+.claude/
+
+figma/
+
+test_auth_callback.html
+
+# Debug/Test files
+test_*.py
+check_*.py
+fix_*.py
+*_test.py
+*_debug.py
+
+# Next.js (nextjs-client directory)
+/nextjs-client
+
+# Sample resources
+sample_pdfs
+
+# Local Netlify folder
+.netlify
+DATABASE_FIX_INSTRUCTIONS.md
+/docs
+/nextjs-test-client
+cleanup_orphaned_conversations.py
+migrations/049_cleanup_orphaned_conversations.sql
+migrations/050_cleanup_single_participant_conversations.sql
+migrations/051_fix_function_search_path_security.sql
+migrations/052_add_missing_rls_policies.sql
+migrations/053_add_missing_foreign_key_indexes.sql
+migrations/054_drop_duplicate_indexes.sql
+redis_cache.py
+import_episodes_for_featured.py
+SECURITY_WARNINGS_FIXES.md
+add_featured_podcasts.py
+/supabase
+/downloads
+/cloudflare_scripts
+.env.example

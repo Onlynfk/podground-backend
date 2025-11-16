@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: podground-backend
+    env: python
+    runtime: python-3.12.8
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: EMAILOCTOPUS_API_KEY
+        sync: false
+      - key: EMAILOCTOPUS_LIST_ID_A
+        sync: false
+      - key: EMAILOCTOPUS_LIST_ID_B
+        sync: false
+      - key: CAPTCHA_SECRET_KEY
+        sync: false
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: DATABASE_URL
+        value: sqlite:///./app.db
