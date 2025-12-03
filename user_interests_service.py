@@ -6,14 +6,14 @@ import logging
 from typing import Dict, Any, List
 from fastapi import HTTPException
 
-from supabase_client import SupabaseClient
+from supabase_client import get_supabase_client
 
 logger = logging.getLogger(__name__)
 
 
 class UserInterestsService:
     def __init__(self):
-        self.supabase_client = SupabaseClient()
+        self.supabase_client = get_supabase_client()
 
     async def get_all_topics(self) -> List[Dict[str, Any]]:
         """Get all available topics"""

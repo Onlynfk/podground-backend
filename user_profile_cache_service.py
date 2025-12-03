@@ -135,7 +135,7 @@ class UserProfileCacheService:
         Cache multiple user profiles
 
         Args:
-            profiles: List of profile dictionaries (must contain 'user_id' field)
+            profiles: List of profile dictionaries (must contain 'user_id' or 'id' field)
         """
         if not profiles:
             return
@@ -146,9 +146,10 @@ class UserProfileCacheService:
 
         with self._lock:
             for profile in profiles:
-                user_id = profile.get('user_id')
+                # Accept either 'user_id' or 'id' field
+                user_id = profile.get('user_id') or profile.get('id')
                 if not user_id:
-                    logger.warning("Profile missing user_id, skipping cache")
+                    logger.warning("Profile missing user_id/id field, skipping cache")
                     continue
 
                 cache_key = self._generate_cache_key(user_id)

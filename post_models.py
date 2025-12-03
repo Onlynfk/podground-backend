@@ -250,12 +250,15 @@ class CommentsResponse(BaseModel):
     comments: List[CommentResponse]
     next_cursor: Optional[str] = None
     has_more: bool = False
+    
 
 class TopicsResponse(BaseModel):
     trending_topics: List[Dict[str, Any]]
 
 class ResourcesResponse(BaseModel):
     resources: List[Dict[str, Any]]
+    total_count: Optional[int] = None
+    has_more: Optional[bool] = None
 
 class EventsResponse(BaseModel):
     events: List[Dict[str, Any]]

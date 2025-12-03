@@ -12,7 +12,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-from supabase_client import SupabaseClient
+from supabase_client import get_supabase_client
 from signed_url_cache_service import get_signed_url_cache_service
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 class MessageMediaService:
     def __init__(self):
-        self.supabase_client = SupabaseClient()
+        self.supabase_client = get_supabase_client()
 
         # Initialize R2 client
         r2_account_id = os.getenv('R2_ACCOUNT_ID')

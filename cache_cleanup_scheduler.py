@@ -8,7 +8,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Dict, Any
 
-from supabase_client import SupabaseClient
+from supabase_client import get_supabase_client
 from podcast_search_service import get_podcast_search_service
 
 logger = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class CacheCleanupScheduler:
     def __init__(self):
         try:
-            self.supabase_client = SupabaseClient()
+            self.supabase_client = get_supabase_client()
         except Exception as e:
             logger.warning(f"Could not initialize Supabase client: {e}")
             self.supabase_client = None

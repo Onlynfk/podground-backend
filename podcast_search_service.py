@@ -5,6 +5,7 @@ Implements PostgreSQL-based caching with ListenNotes API integration
 import httpx
 import logging
 import os
+import html
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timezone, timedelta
 from supabase import Client
@@ -74,12 +75,17 @@ class PodcastSearchService:
             # Transform results and add claimed/following status
             results = []
             for podcast in api_results['results']:
+                # Decode HTML entities (e.g., &amp; -> &)
+                title_raw = podcast.get('title_original', podcast.get('title', ''))
+                publisher_raw = podcast.get('publisher_original', podcast.get('publisher', ''))
+                description_raw = podcast.get('description_original', podcast.get('description', ''))
+
                 result = {
                     'id': podcast.get('id'),
                     'listennotes_id': podcast.get('id'),
-                    'title': podcast.get('title_original', podcast.get('title')),
-                    'publisher': podcast.get('publisher_original', podcast.get('publisher')),
-                    'description': podcast.get('description_original', podcast.get('description')),
+                    'title': html.unescape(title_raw),
+                    'publisher': html.unescape(publisher_raw),
+                    'description': html.unescape(description_raw),
                     'image': podcast.get('image'),
                     'claimed': False,  # Will be updated in batch
                     'following': False  # Will be updated in batch
@@ -537,14 +543,19 @@ class PodcastSearchService:
             expires_at = datetime.now(timezone.utc) + timedelta(minutes=self.search_cache_minutes)
             
             for result in results:
+                # Decode HTML entities (e.g., &amp; -> &) before caching
+                title_raw = result.get('title_original', result.get('title', ''))
+                publisher_raw = result.get('publisher_original', result.get('publisher', ''))
+                description_raw = result.get('description_original') or result.get('description', '')
+
                 cache_entry = {
                     'search_query': query,
                     'genre_id': genre_id,
                     'sort_by': sort_by,
                     'listennotes_id': result.get('id'),
-                    'title': result.get('title_original', result.get('title', ''))[:500],
-                    'publisher': result.get('publisher_original', result.get('publisher', ''))[:255],
-                    'description': (result.get('description_original') or result.get('description', ''))[:1000],
+                    'title': html.unescape(title_raw)[:500],
+                    'publisher': html.unescape(publisher_raw)[:255],
+                    'description': html.unescape(description_raw)[:1000],
                     'image_url': result.get('image'),
                     'total_episodes': result.get('total_episodes', 0),
                     'first_episode_date': self._parse_timestamp(result.get('earliest_pub_date_ms')),
@@ -630,12 +641,17 @@ class PodcastSearchService:
     
     def _transform_podcast_for_response(self, api_data: Dict[str, Any]) -> Dict[str, Any]:
         """Transform API podcast data to response format"""
+        # Decode HTML entities (e.g., &amp; -> &)
+        title_raw = api_data.get('title_original', api_data.get('title', ''))
+        description_raw = api_data.get('description_original', api_data.get('description', ''))
+        publisher_raw = api_data.get('publisher_original', api_data.get('publisher', ''))
+
         return {
             'id': api_data.get('id'),
             'listennotes_id': api_data.get('id'),
-            'title': api_data.get('title_original', api_data.get('title')),
-            'description': api_data.get('description_original', api_data.get('description')),
-            'publisher': api_data.get('publisher_original', api_data.get('publisher')),
+            'title': html.unescape(title_raw),
+            'description': html.unescape(description_raw),
+            'publisher': html.unescape(publisher_raw),
             'image': api_data.get('image'),
             'website': api_data.get('website'),
             'rss': api_data.get('rss'),
@@ -648,12 +664,17 @@ class PodcastSearchService:
     async def _cache_podcast_from_api_data(self, api_data: Dict[str, Any]) -> Optional[str]:
         """Cache podcast data from API response"""
         try:
+            # Decode HTML entities (e.g., &amp; -> &) before caching
+            title_raw = api_data.get('title_original') or api_data.get('title', '')
+            publisher_raw = api_data.get('publisher_original') or api_data.get('publisher', '')
+            description_raw = api_data.get('description_original') or api_data.get('description', '')
+
             # Use the database function to cache podcast
             result = self.supabase.rpc('cache_podcast_from_api', {
                 'p_listennotes_id': api_data.get('id'),
-                'p_title': (api_data.get('title_original') or api_data.get('title', ''))[:500],
-                'p_publisher': (api_data.get('publisher_original') or api_data.get('publisher', ''))[:255],
-                'p_description': api_data.get('description_original') or api_data.get('description'),
+                'p_title': html.unescape(title_raw)[:500],
+                'p_publisher': html.unescape(publisher_raw)[:255],
+                'p_description': html.unescape(description_raw),
                 'p_image_url': api_data.get('image'),
                 'p_rss_url': api_data.get('rss'),
                 'p_website_url': api_data.get('website'),

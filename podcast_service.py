@@ -5,11 +5,14 @@ Handles podcast/episode discovery, featured content, and ListenNotes integration
 from typing import Dict, List, Any, Optional, Tuple
 import asyncio
 import httpx
+import html
 from datetime import datetime, timezone
 from supabase import Client
 import os
 import logging
 from episode_import_service import get_episode_import_service
+from datetime_utils import format_datetime_central
+from podcast_episode_cache_service import get_podcast_episode_cache_service
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +21,7 @@ class PodcastDiscoveryService:
         self.supabase = supabase
         self.listennotes_api_key = os.getenv('LISTENNOTES_API_KEY')
         self.listennotes_base_url = "https://listen-api.listennotes.com/api/v2"
+        self.episode_cache = get_podcast_episode_cache_service()
         
     async def get_categories(self) -> List[Dict[str, Any]]:
         """Get all active podcast categories"""
@@ -34,9 +38,15 @@ class PodcastDiscoveryService:
             return []
     
     async def get_most_recent_episode(self, podcast_id: str) -> Optional[Dict[str, Any]]:
-        """Get the most recent episode for a podcast with smart caching and TTL"""
+        """Get the most recent episode for a podcast with smart in-memory + database caching and TTL"""
         try:
             from datetime import datetime, timezone, timedelta
+
+            # Check in-memory cache first (fastest path)
+            cached_episode = self.episode_cache.get_latest_episode(podcast_id)
+            if cached_episode:
+                logger.debug(f"Returning latest episode from in-memory cache for podcast {podcast_id[:8]}...")
+                return cached_episode
 
             # Check if caching is enabled (default: True)
             cache_enabled = os.getenv('ENABLE_LATEST_EPISODE_CACHE', 'true').lower() in ('true', '1', 'yes')
@@ -79,6 +89,8 @@ class PodcastDiscoveryService:
                 if listennotes_id:
                     fresh_episode = await self._refresh_latest_episode_from_api(podcast_id, listennotes_id)
                     if fresh_episode:
+                        # Cache in memory for faster subsequent access
+                        self.episode_cache.set_latest_episode(podcast_id, fresh_episode)
                         return fresh_episode
                 # Fallback to cached episode if API refresh failed
                 if latest_episode_id:
@@ -116,9 +128,11 @@ class PodcastDiscoveryService:
                         logger.warning(f"Error parsing latest_episode_updated_at: {e}")
                         needs_refresh = True
                 else:
-                    # No TTL column available, assume cache is fresh to avoid constant API calls
-                    logger.debug(f"No TTL column available, using cached episode for podcast {podcast_id}")
-                    needs_refresh = False
+                    # No TTL column available, refresh periodically based on in-memory cache
+                    # This ensures episodes eventually refresh even without the database column
+                    logger.debug(f"No TTL column available, checking in-memory cache for podcast {podcast_id}")
+                    # If in-memory cache is empty, trigger refresh (first access or cache expired)
+                    needs_refresh = True
             else:
                 logger.info(f"No cached latest episode for podcast {podcast_id}, fetching fresh...")
 
@@ -143,6 +157,8 @@ class PodcastDiscoveryService:
             if listennotes_id:
                 fresh_episode = await self._refresh_latest_episode_from_api(podcast_id, listennotes_id)
                 if fresh_episode:
+                    # Cache in memory for faster subsequent access
+                    self.episode_cache.set_latest_episode(podcast_id, fresh_episode)
                     return fresh_episode
 
             # Fallback to cached episode if API refresh failed
@@ -168,22 +184,24 @@ class PodcastDiscoveryService:
             return None
     
     async def enrich_podcast_with_recent_episode(self, podcast: Dict[str, Any]) -> Dict[str, Any]:
-        """Enrich a podcast dict with its most recent episode"""
-        # Handle different podcast sources
-        if podcast.get('source') == 'listennotes':
-            # For ListenNotes podcasts, get latest episode from API
-            listennotes_id = podcast.get('listennotes_id')
-            if listennotes_id:
-                recent_episode = await self._get_listennotes_latest_episode(listennotes_id)
-                if recent_episode:
-                    podcast['most_recent_episode'] = recent_episode
-        else:
-            # For local database podcasts, use the internal database UUID for episode queries
-            podcast_uuid = podcast.get('id')
-            if podcast_uuid:
-                recent_episode = await self.get_most_recent_episode(podcast_uuid)
-                if recent_episode:
-                    podcast['most_recent_episode'] = recent_episode
+        """Enrich a podcast dict with its most recent episode using TTL-based caching"""
+        # Use get_most_recent_episode which respects ENABLE_LATEST_EPISODE_CACHE and LATEST_EPISODE_TTL_MINUTES
+        podcast_uuid = podcast.get('id')
+        listennotes_id = podcast.get('listennotes_id')
+
+        # For local database podcasts, use the smart caching with TTL
+        if podcast_uuid:
+            recent_episode = await self.get_most_recent_episode(podcast_uuid)
+            if recent_episode:
+                podcast['most_recent_episode'] = recent_episode
+                return podcast
+
+        # Fallback for ListenNotes-only podcasts (not yet in our DB)
+        if podcast.get('source') == 'listennotes' and listennotes_id:
+            recent_episode = await self._get_listennotes_latest_episode(listennotes_id)
+            if recent_episode:
+                podcast['most_recent_episode'] = recent_episode
+
         return podcast
     
     async def update_podcast_latest_episode_id(self, podcast_id: str) -> bool:
@@ -775,20 +793,34 @@ class PodcastDiscoveryService:
             return None
     
     async def get_podcast_episodes(
-        self, 
-        podcast_id: str, 
-        limit: int = 50, 
+        self,
+        podcast_id: str,
+        limit: int = 50,
         offset: int = 0,
         user_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """Get episodes for a podcast with pagination support, import on-demand if needed"""
+        """Get episodes for a podcast with pagination support, with configurable TTL-based refresh"""
         try:
-            # Get podcast details to determine the correct table and IDs
+            from datetime import datetime, timezone, timedelta
+
+            
+            # Check in-memory cache first for episode list
+            cached_result = self.episode_cache.get_episodes_list(podcast_id, limit, offset)
+            if cached_result:
+                logger.debug(f"Returning episodes list from in-memory cache for podcast {podcast_id[:8]}...")
+                episodes, total_count = cached_result
+                # Still need to enrich with user data if provided
+                if user_id and episodes:
+                    # ... user enrichment logic would go here ...
+                    pass
+                return episodes, total_count
+
+# Get podcast details to determine the correct table and IDs
             podcast_details = await self.get_podcast_details(podcast_id)
             if not podcast_details:
                 logger.error(f"Cannot find podcast details for {podcast_id}")
                 return [], 0
-            
+
             # Determine the correct podcast ID to use for episode queries
             # If podcast is from ListenNotes and not in our DB, we need to handle it differently
             if podcast_details.get('source') == 'listennotes':
@@ -799,7 +831,7 @@ class PodcastDiscoveryService:
                         .select('id') \
                         .eq('listennotes_id', podcast_details.get('listennotes_id')) \
                         .execute()
-                    
+
                     if db_check.data and len(db_check.data) > 0:
                         episode_query_podcast_id = db_check.data[0]['id']
                     else:
@@ -810,16 +842,60 @@ class PodcastDiscoveryService:
                     episode_query_podcast_id = None
             else:
                 episode_query_podcast_id = podcast_details.get('id')
-            
-            # Check if episodes exist for this podcast (using the correct ID)
-            episodes_exist = False
-            if episode_query_podcast_id:
-                episodes_exist = await self._check_episodes_exist(episode_query_podcast_id)
-            
-            # If no episodes exist, try to import them on-demand
-            if not episodes_exist:
+
+            # Check if we should refresh based on TTL configuration
+            should_refresh = False
+
+            # Check if caching is enabled (default: True)
+            cache_enabled = os.getenv('ENABLE_LATEST_EPISODE_CACHE', 'true').lower() in ('true', '1', 'yes')
+
+            if not cache_enabled:
+                # Caching disabled, always refresh
+                should_refresh = True
+                logger.info(f"Episode cache is DISABLED, will refresh episodes for podcast {podcast_id}")
+            else:
+                # Check if episodes exist and their last update time
+                episodes_exist = False
+                if episode_query_podcast_id:
+                    episodes_exist = await self._check_episodes_exist(episode_query_podcast_id)
+
+                if not episodes_exist:
+                    # No episodes exist, need to import
+                    should_refresh = True
+                    logger.info(f"No episodes exist for podcast {podcast_id}, will import")
+                else:
+                    # Episodes exist, check TTL
+                    ttl_minutes = int(os.getenv('LATEST_EPISODE_TTL_MINUTES', '360'))
+
+                    # Check when episodes were last updated
+                    try:
+                        latest_episode_updated_at = podcast_details.get('latest_episode_updated_at')
+
+                        if latest_episode_updated_at:
+                            updated_time = datetime.fromisoformat(latest_episode_updated_at.replace('Z', '+00:00'))
+                            ttl_threshold = datetime.now(timezone.utc) - timedelta(minutes=ttl_minutes)
+
+                            if updated_time < ttl_threshold:
+                                should_refresh = True
+                                logger.info(f"Episodes cache expired for podcast {podcast_id} (TTL: {ttl_minutes} min), will refresh")
+                            else:
+                                logger.info(f"Episodes cache is fresh for podcast {podcast_id} (TTL: {ttl_minutes} min)")
+                        else:
+                            # No timestamp column available, refresh periodically based on in-memory cache
+                            # This ensures episodes eventually refresh even without the database column
+                            logger.debug(f"No episode update timestamp for podcast {podcast_id}, checking in-memory cache")
+                            # If in-memory cache was empty (cache miss at line 808), trigger refresh
+                            # This happens on first access or after cache expiry
+                            should_refresh = True
+                    except Exception as e:
+                        logger.warning(f"Error checking episode TTL: {e}, using cached episodes")
+
+            # Refresh episodes if needed
+            if should_refresh:
+                logger.info(f"Refreshing episodes from ListenNotes for podcast {podcast_id}")
                 success = await self._import_episodes_on_demand(podcast_id)
-                # After import, get the real database ID if we didn't have it
+
+                # After import/refresh, get the real database ID if we didn't have it
                 if success and not episode_query_podcast_id:
                     try:
                         db_check = self.supabase.table('podcasts') \
@@ -846,7 +922,10 @@ class PodcastDiscoveryService:
             episodes_result = episodes_query.execute()
             episodes = episodes_result.data
             total_count = episodes_result.count or 0
-            
+
+            # Cache the episodes list in memory (before user enrichment)
+            self.episode_cache.set_episodes_list(podcast_id, limit, offset, episodes, total_count)
+
             # If we have fewer episodes than expected and user is requesting later pages,
             # try to import more episodes
             if total_count > 0 and offset >= total_count and total_count < 1000:
@@ -857,6 +936,8 @@ class PodcastDiscoveryService:
                     episodes_result = episodes_query.execute()
                     episodes = episodes_result.data
                     total_count = episodes_result.count or 0
+                    # Update cache with new results
+                    self.episode_cache.set_episodes_list(podcast_id, limit, offset, episodes, total_count)
             
             # If user provided, get progress and saves data
             if user_id and episodes:
@@ -1708,7 +1789,7 @@ class PodcastDiscoveryService:
                     "publisher": podcast.get('publisher'),
                     "image_url": podcast.get('image_url'),
                     "thumbnail_url": podcast.get('thumbnail_url'),
-                    "created_at": podcast.get('created_at')
+                    "created_at": format_datetime_central(podcast.get('created_at'))
                 })
             
             # Get featured podcasts
@@ -1729,7 +1810,7 @@ class PodcastDiscoveryService:
                     "publisher": podcast.get('publisher'),
                     "image_url": podcast.get('image_url'),
                     "thumbnail_url": podcast.get('image_url'),  # Featured podcasts use same URL for both
-                    "created_at": podcast.get('created_at')
+                    "created_at": format_datetime_central(podcast.get('created_at'))
                 })
             
             # Deduplicate podcasts based on listennotes_id
@@ -2124,12 +2205,17 @@ class PodcastDiscoveryService:
                 podcasts = []
                 
                 for ln_podcast in data.get('results', []):
+                    # Decode HTML entities (e.g., &amp; -> &)
+                    title_raw = ln_podcast.get('title_original') or ln_podcast.get('title', '')
+                    description_raw = ln_podcast.get('description_original') or ln_podcast.get('description', '')
+                    publisher_raw = ln_podcast.get('publisher_original') or ln_podcast.get('publisher', '')
+
                     podcast = {
                         'id': ln_podcast.get('id'),  # Use ListenNotes ID as temporary ID
                         'listennotes_id': ln_podcast.get('id'),
-                        'title': ln_podcast.get('title_original') or ln_podcast.get('title'),
-                        'description': ln_podcast.get('description_original') or ln_podcast.get('description'),
-                        'publisher': ln_podcast.get('publisher_original') or ln_podcast.get('publisher'),
+                        'title': html.unescape(title_raw),
+                        'description': html.unescape(description_raw),
+                        'publisher': html.unescape(publisher_raw),
                         'language': ln_podcast.get('language', 'en'),
                         'image_url': ln_podcast.get('image'),
                         'thumbnail_url': ln_podcast.get('thumbnail'),

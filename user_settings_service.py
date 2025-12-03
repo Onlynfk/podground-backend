@@ -7,14 +7,14 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 from fastapi import HTTPException
 
-from supabase_client import SupabaseClient
+from supabase_client import get_supabase_client
 
 logger = logging.getLogger(__name__)
 
 
 class UserSettingsService:
     def __init__(self):
-        self.supabase_client = SupabaseClient()
+        self.supabase_client = get_supabase_client()
 
     # ==================== Notification Preferences ====================
 
@@ -44,6 +44,16 @@ class UserSettingsService:
     async def _create_default_notification_preferences(self, user_id: str) -> Dict[str, Any]:
         """Create default notification preferences for a user"""
         try:
+            # Check if user exists in auth.users before creating preferences
+            try:
+                user_check = self.supabase_client.service_client.auth.admin.get_user_by_id(user_id)
+                if not user_check:
+                    logger.warning(f"User {user_id} does not exist in auth.users, cannot create notification preferences")
+                    raise HTTPException(404, "User not found")
+            except Exception as check_error:
+                logger.warning(f"Could not verify user {user_id} exists: {str(check_error)}")
+                raise HTTPException(404, "User not found")
+
             default_prefs = {
                 "user_id": user_id,
                 # Activity & Engagement - all default to true
@@ -70,6 +80,8 @@ class UserSettingsService:
                 return result.data[0]
             raise Exception("Failed to create default preferences")
 
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error creating default notification preferences: {str(e)}")
             raise HTTPException(500, f"Failed to create default preferences: {str(e)}")
@@ -127,24 +139,42 @@ class UserSettingsService:
         try:
             result = self.supabase_client.service_client.table("user_privacy_settings").select(
                 "*"
-            ).eq("user_id", user_id).single().execute()
+            ).eq("user_id", user_id).execute()
 
-            if result.data:
-                return result.data
+            if result.data and len(result.data) > 0:
+                return result.data[0]
 
             # Create default settings if they don't exist
             return await self._create_default_privacy_settings(user_id)
 
+        except HTTPException as he:
+            # If user not found (deleted user), return safe defaults instead of failing
+            if he.status_code == 404:
+                logger.warning(f"User {user_id} not found (likely deleted), returning default privacy settings")
+                return {
+                    "user_id": user_id,
+                    "profile_visibility": True,
+                    "search_visibility": True,
+                    "show_activity_status": True,
+                }
+            raise
         except Exception as e:
-            # If no settings found, create defaults
-            if "No rows found" in str(e) or "JSON object requested" in str(e):
-                return await self._create_default_privacy_settings(user_id)
             logger.error(f"Error getting privacy settings: {str(e)}")
             raise HTTPException(500, f"Failed to get privacy settings: {str(e)}")
 
     async def _create_default_privacy_settings(self, user_id: str) -> Dict[str, Any]:
         """Create default privacy settings for a user"""
         try:
+            # Check if user exists in auth.users before creating settings
+            try:
+                user_check = self.supabase_client.service_client.auth.admin.get_user_by_id(user_id)
+                if not user_check:
+                    logger.warning(f"User {user_id} does not exist in auth.users, cannot create privacy settings")
+                    raise HTTPException(404, "User not found")
+            except Exception as check_error:
+                logger.warning(f"Could not verify user {user_id} exists: {str(check_error)}")
+                raise HTTPException(404, "User not found")
+
             default_settings = {
                 "user_id": user_id,
                 "profile_visibility": True,  # Profile visible by default
@@ -160,6 +190,8 @@ class UserSettingsService:
                 return result.data[0]
             raise Exception("Failed to create default privacy settings")
 
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error creating default privacy settings: {str(e)}")
             raise HTTPException(500, f"Failed to create default privacy settings: {str(e)}")
@@ -263,8 +295,15 @@ class UserSettingsService:
             settings = await self.get_privacy_settings(user_id)
             return settings.get("profile_visibility", True)
 
+        except HTTPException as he:
+            # If user not found (deleted user), return default visibility
+            if he.status_code == 404:
+                logger.debug(f"User {user_id} not found when checking profile visibility, defaulting to visible")
+                return True
+            logger.error(f"Error checking profile visibility for user {user_id}: {str(he)}")
+            return True
         except Exception as e:
-            logger.error(f"Error checking profile visibility: {str(e)}")
+            logger.error(f"Error checking profile visibility for user {user_id} (requested by {requesting_user_id}): {str(e)}")
             # Fail open - show profile if we can't check
             return True
 
@@ -279,6 +318,12 @@ class UserSettingsService:
             settings = await self.get_privacy_settings(user_id)
             return settings.get("search_visibility", True)
 
+        except HTTPException as he:
+            if he.status_code == 404:
+                logger.debug(f"User {user_id} not found when checking search visibility, defaulting to visible")
+                return True
+            logger.error(f"Error checking search visibility: {str(he)}")
+            return True
         except Exception as e:
             logger.error(f"Error checking search visibility: {str(e)}")
             # Fail open - show in search if we can't check
@@ -295,6 +340,12 @@ class UserSettingsService:
             settings = await self.get_privacy_settings(user_id)
             return settings.get("show_activity_status", True)
 
+        except HTTPException as he:
+            if he.status_code == 404:
+                logger.debug(f"User {user_id} not found when checking activity status visibility, defaulting to visible")
+                return True
+            logger.error(f"Error checking activity status visibility: {str(he)}")
+            return True
         except Exception as e:
             logger.error(f"Error checking activity status visibility: {str(e)}")
             # Fail open - show status if we can't check

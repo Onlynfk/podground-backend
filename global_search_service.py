@@ -9,10 +9,11 @@ import os
 import time
 import hashlib
 import httpx
+import html
 from typing import Dict, List, Any, Optional
 from datetime import datetime, timezone
 
-from supabase_client import SupabaseClient
+from supabase_client import get_supabase_client
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +194,7 @@ class GlobalSearchService:
     """Service for searching across all content types"""
 
     def __init__(self):
-        self.supabase_client = SupabaseClient()
+        self.supabase_client = get_supabase_client()
         self.cache = SearchCache()
 
         # Initialize R2 configuration for signed URLs
@@ -886,9 +887,20 @@ class GlobalSearchService:
             if not result.data:
                 return []
 
-            # Get full profiles with avatars (already returns signed avatar URLs)
+            # Filter by platform readiness (completed onboarding + verified podcast claim)
             user_ids = [u['user_id'] for u in result.data]
-            user_profiles = await profile_service.get_users_by_ids(user_ids)
+            platform_ready_result = self.supabase_client.filter_platform_ready_users(user_ids)
+
+            if not platform_ready_result["success"]:
+                logger.error(f"Failed to filter platform ready users in search: {platform_ready_result.get('error')}")
+                return []
+
+            ready_user_ids = platform_ready_result["ready_user_ids"]
+            if not ready_user_ids:
+                return []
+
+            # Get full profiles with avatars (already returns signed avatar URLs)
+            user_profiles = await profile_service.get_users_by_ids(ready_user_ids)
 
             users = []
             for profile in user_profiles:
@@ -1069,13 +1081,18 @@ class GlobalSearchService:
                 podcasts = []
 
                 for result in data.get('results', []):
+                    # Decode HTML entities (e.g., &amp; -> &)
+                    title_raw = result.get('title_original', result.get('title', ''))
+                    description_raw = result.get('description_original') or result.get('description', '')
+                    publisher_raw = result.get('publisher_original', result.get('publisher', ''))
+
                     podcasts.append({
                         'id': result.get('id'),  # ListenNotes ID
                         'listennotes_id': result.get('id'),
-                        'title': result.get('title_original', result.get('title')),
-                        'description': (result.get('description_original') or result.get('description', ''))[:200],
+                        'title': html.unescape(title_raw),
+                        'description': html.unescape(description_raw)[:200],
                         'image_url': result.get('image'),  # External URL, no signing needed
-                        'publisher': result.get('publisher_original', result.get('publisher')),
+                        'publisher': html.unescape(publisher_raw),
                         'source': 'listennotes',
                         'type': 'podcast'
                     })
@@ -1122,14 +1139,19 @@ class GlobalSearchService:
                 episodes = []
 
                 for result in data.get('results', []):
+                    # Decode HTML entities (e.g., &amp; -> &)
+                    title_raw = result.get('title_original', result.get('title', ''))
+                    description_raw = result.get('description_original') or result.get('description', '')
+                    podcast_title_raw = result.get('podcast', {}).get('title_original', result.get('podcast', {}).get('title', ''))
+
                     episodes.append({
                         'id': result.get('id'),  # ListenNotes episode ID
                         'listennotes_id': result.get('id'),
-                        'title': result.get('title_original', result.get('title')),
-                        'description': (result.get('description_original') or result.get('description', ''))[:200],
+                        'title': html.unescape(title_raw),
+                        'description': html.unescape(description_raw)[:200],
                         'image_url': result.get('image'),  # External URL, no signing needed
                         'podcast_id': None,  # Not in our database
-                        'podcast_title': result.get('podcast', {}).get('title_original', result.get('podcast', {}).get('title')),
+                        'podcast_title': html.unescape(podcast_title_raw),
                         'podcast_listennotes_id': result.get('podcast', {}).get('id'),
                         'audio_url': result.get('audio'),
                         'pub_date': result.get('pub_date_ms'),

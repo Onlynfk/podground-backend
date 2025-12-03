@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 
 from supabase_client import SupabaseClient
+from datetime_utils import format_datetime_central
 
 logger = logging.getLogger(__name__)
 
@@ -111,8 +112,8 @@ class UserConnectionsService:
                     "user": user_profile,
                     "status": conn["status"],
                     "is_requester": is_requester,
-                    "created_at": conn["created_at"],
-                    "accepted_at": conn.get("accepted_at"),
+                    "created_at": format_datetime_central(conn["created_at"]),
+                    "accepted_at": format_datetime_central(conn.get("accepted_at")),
                     "has_conversation": conversation_id is not None,
                     "conversation_id": conversation_id
                 }
@@ -159,7 +160,7 @@ class UserConnectionsService:
                     request_data = {
                         "request_id": conn["id"],
                         "user": profiles_map.get(conn["follower_id"], {"id": conn["follower_id"]}),
-                        "created_at": conn["created_at"],
+                        "created_at": format_datetime_central(conn["created_at"]),
                         "direction": "incoming"
                     }
                     incoming_requests.append(request_data)
@@ -176,7 +177,7 @@ class UserConnectionsService:
                     request_data = {
                         "request_id": conn["id"],
                         "user": profiles_map.get(conn["following_id"], {"id": conn["following_id"]}),
-                        "created_at": conn["created_at"],
+                        "created_at": format_datetime_central(conn["created_at"]),
                         "direction": "outgoing"
                     }
                     outgoing_requests.append(request_data)
@@ -512,12 +513,22 @@ class UserConnectionsService:
             if not candidate_user_ids:
                 return {"suggested_connections": [], "total": 0}
 
-            # Filter by privacy settings - check all candidates first
+            # Filter by platform readiness (completed onboarding + verified podcast claim)
+            platform_ready_result = self.supabase_client.filter_platform_ready_users(candidate_user_ids)
+            if not platform_ready_result["success"]:
+                logger.error(f"Failed to filter platform ready users: {platform_ready_result.get('error')}")
+                return {"suggested_connections": [], "total": 0}
+
+            ready_user_ids = platform_ready_result["ready_user_ids"]
+            if not ready_user_ids:
+                return {"suggested_connections": [], "total": 0}
+
+            # Filter by privacy settings - check all platform-ready candidates
             from user_settings_service import get_user_settings_service
             settings_service = get_user_settings_service()
 
             searchable_user_ids = []
-            for candidate_id in candidate_user_ids:
+            for candidate_id in ready_user_ids:
                 try:
                     is_searchable = await settings_service.is_user_searchable(candidate_id)
                     if is_searchable:

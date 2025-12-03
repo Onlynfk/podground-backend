@@ -235,13 +235,19 @@ class SupabaseClient:
             
             if stored_code != code:
                 return {"success": False, "error": "Invalid verification code"}
-            
+
             # Clear the verification code after successful verification
+            from datetime import datetime, timezone
             self.service_client.auth.admin.update_user_by_id(
                 user.id,
-                {"user_metadata": {**user_metadata, "verification_code": None}}
+                {
+                    "user_metadata": {**user_metadata, "verification_code": None}
+                }
             )
-            
+
+            # Update last_sign_in_at timestamp
+            self.update_last_sign_in_at(user.id)
+
             return {"success": True, "user_id": user.id}
             
         except Exception as e:
@@ -335,7 +341,10 @@ class SupabaseClient:
                     
                     if user_id and email:
                         logger.info(f"Successfully decoded JWT token for user {user_id}")
-                        
+
+                        # Update last_sign_in_at for this user
+                        self.update_last_sign_in_at(user_id)
+
                         # Create user object
                         user_obj = type('User', (), {
                             'id': user_id,
@@ -343,14 +352,14 @@ class SupabaseClient:
                             'user_metadata': decoded_token.get('user_metadata', {}),
                             'app_metadata': decoded_token.get('app_metadata', {})
                         })()
-                        
+
                         # Create session object
                         session_obj = type('Session', (), {
                             'access_token': clean_code,
                             'refresh_token': '',
                             'user': user_obj
                         })()
-                        
+
                         return {
                             "success": True,
                             "user": user_obj,
@@ -577,13 +586,19 @@ class SupabaseClient:
         elif step == 5:
             # Favorite podcasts - Select top 5 favorite podcasts
             favorite_podcasts = step_data.get("favorite_podcast_ids", [])
-            
+
             # Create follows for the listening system (single source of truth)
             if automatic_favorites or favorite_podcasts:
                 follows_result = self._create_follows_from_onboarding(user_id, favorite_podcasts, automatic_favorites)
                 if not follows_result["success"]:
                     return {"success": False, "error": f"Failed to create follows: {follows_result.get('error')}"}
-            
+
+            # Sync onboarding data to user_profiles when completing final step
+            sync_result = self._sync_onboarding_to_profile(user_id)
+            if not sync_result["success"]:
+                logger.warning(f"Failed to sync onboarding data to profile for user {user_id}: {sync_result.get('error')}")
+                # Don't fail the entire onboarding, just log the warning
+
             update_data.update({
                 # favorite podcasts now stored directly in user_podcast_follows table
                 "step_5_completed": True,
@@ -1001,7 +1016,34 @@ class SupabaseClient:
         except Exception as e:
             logger.error(f"Error marking first login: {str(e)}")
             return {"success": False, "error": str(e)}
-    
+
+    def update_last_sign_in_at(self, user_id: str) -> Dict:
+        """Update user's last_sign_in_at timestamp in auth.users table"""
+        if not self.service_client:
+            return {"success": False, "error": "Service client not initialized"}
+
+        try:
+            from datetime import datetime, timezone
+
+            # Use RPC to update auth.users table directly
+            # This requires a database function - we'll use raw SQL via the REST API
+            result = self.service_client.rpc(
+                'update_user_last_sign_in',
+                {'user_id_input': user_id}
+            ).execute()
+
+            if result:
+                logger.info(f"Updated last_sign_in_at for user {user_id}")
+                return {"success": True}
+            else:
+                logger.warning(f"Failed to update last_sign_in_at for user {user_id}")
+                return {"success": False, "error": "Failed to update last_sign_in_at"}
+
+        except Exception as e:
+            # If the function doesn't exist, log but don't fail
+            logger.warning(f"Could not update last_sign_in_at for user {user_id}: {str(e)}")
+            return {"success": False, "error": str(e)}
+
     def get_users_needing_reminder(self, hours_since_signup: int = 24) -> Dict:
         """Get users who need first login reminders"""
         if not self.service_client:
@@ -1185,12 +1227,13 @@ class SupabaseClient:
             # Get plan ID
             plan_result = self.service_client.table("subscription_plans").select("id").eq(
                 "name", plan_name
-            ).single().execute()
-            
-            if not plan_result.data:
+            ).execute()
+
+            if not plan_result.data or len(plan_result.data) == 0:
+                logger.error(f"Subscription plan '{plan_name}' not found in database")
                 return {"success": False, "error": f"Plan '{plan_name}' not found"}
-            
-            plan_id = plan_result.data["id"]
+
+            plan_id = plan_result.data[0]["id"]
             
             # Create subscription
             from datetime import datetime, timedelta, timezone
@@ -1568,60 +1611,218 @@ class SupabaseClient:
             return {"success": False, "error": str(e)}
     
     def update_favorite_podcast_metadata(self, podcast_id: str, title: str, image: str = None, publisher: str = None) -> Dict:
-        """Update metadata for a favorite podcast (denormalized for performance)"""
-        if not self.service_client:
-            return {"success": False, "error": "Service client not initialized"}
-        
+        """
+        DEPRECATED: This method is no longer used.
+
+        Previously updated denormalized metadata in user_favorite_podcasts table,
+        but that table has been deprecated in favor of user_podcast_follows which
+        gets podcast metadata dynamically via JOINs with the podcasts table.
+
+        Keeping this method as a no-op for backward compatibility.
+        """
+        logger.debug(f"update_favorite_podcast_metadata called for {podcast_id} but is deprecated - skipping")
+        return {"success": True, "message": "Method deprecated, no action taken"}
+
+    def _sync_onboarding_to_profile(self, user_id: str) -> Dict:
+        """
+        Sync onboarding data to user_profiles table when onboarding completes.
+        This ensures location and other onboarding data is available in the profile.
+        """
         try:
-            update_data = {"podcast_title": title}
-            if image:
-                update_data["podcast_image"] = image
-            if publisher:
-                update_data["podcast_publisher"] = publisher
-            
-            result = self.service_client.table("user_favorite_podcasts").update(
-                update_data
-            ).eq("podcast_id", podcast_id).execute()
-            
-            if result.data:
-                logger.info(f"Updated metadata for podcast {podcast_id}")
-                return {"success": True, "data": result.data}
+            # Get onboarding data
+            onboarding_result = self.service_client.table("user_onboarding").select(
+                "location_id"
+            ).eq("id", user_id).execute()
+
+            if not onboarding_result.data:
+                return {"success": False, "error": "No onboarding data found"}
+
+            onboarding_data = onboarding_result.data[0]
+            location_id = onboarding_data.get("location_id")
+
+            # If there's a location_id, convert it to location string (City, Country)
+            location_string = None
+            if location_id:
+                try:
+                    # Get location data from states_countries table
+                    location_result = self.service_client.table("states_countries").select(
+                        "name, country_name"
+                    ).eq("id", location_id).execute()
+
+                    if location_result.data:
+                        state_name = location_result.data[0].get("name")
+                        country_name = location_result.data[0].get("country_name")
+
+                        # Format as "City, Country"
+                        if state_name and country_name:
+                            location_string = f"{state_name}, {country_name}"
+                        elif state_name:
+                            location_string = state_name
+                except Exception as e:
+                    logger.warning(f"Could not fetch location for id {location_id}: {e}")
+
+            # Prepare update data
+            profile_update = {}
+            if location_string:
+                profile_update["location"] = location_string
+
+            # Only update if there's data to update
+            if not profile_update:
+                logger.info(f"No onboarding data to sync to profile for user {user_id}")
+                return {"success": True, "message": "No data to sync"}
+
+            # Check if profile exists
+            existing_profile = self.service_client.table("user_profiles").select(
+                "id"
+            ).eq("user_id", user_id).execute()
+
+            if existing_profile.data:
+                # Update existing profile
+                result = self.service_client.table("user_profiles").update(
+                    profile_update
+                ).eq("user_id", user_id).execute()
+
+                if not result.data:
+                    return {"success": False, "error": "Failed to update profile"}
+
+                logger.info(f"Synced onboarding data to profile for user {user_id}: {profile_update}")
             else:
-                return {"success": False, "error": "Failed to update podcast metadata"}
-                
+                # Create new profile
+                profile_update["user_id"] = user_id
+                result = self.service_client.table("user_profiles").insert(
+                    profile_update
+                ).execute()
+
+                if not result.data:
+                    return {"success": False, "error": "Failed to create profile"}
+
+                logger.info(f"Created profile with onboarding data for user {user_id}: {profile_update}")
+
+            return {"success": True, "data": result.data}
+
         except Exception as e:
-            logger.error(f"Failed to update podcast metadata: {str(e)}")
+            logger.error(f"Error syncing onboarding to profile for user {user_id}: {str(e)}")
             return {"success": False, "error": str(e)}
-    
+
+    def _import_podcast_from_listennotes(self, listennotes_id: str) -> Optional[str]:
+        """
+        Import a podcast from ListenNotes API into the local database
+
+        Args:
+            listennotes_id: The ListenNotes podcast ID
+
+        Returns:
+            The local podcast ID if successful, None otherwise
+        """
+        try:
+            from listennotes_client import ListenNotesClient
+
+            # Fetch podcast data from ListenNotes
+            ln_client = ListenNotesClient()
+            if not ln_client.client:
+                logger.warning("ListenNotes API client not initialized, cannot import podcast")
+                return None
+
+            result = ln_client.get_podcast_by_id(listennotes_id)
+
+            if not result or not result.get('success') or not result.get('data'):
+                logger.warning(f"Could not fetch podcast {listennotes_id} from ListenNotes")
+                return None
+
+            podcast_data = result['data']
+
+            # Prepare insert data
+            insert_data = {
+                'listennotes_id': listennotes_id,
+                'title': podcast_data.get('title', 'Unknown Podcast'),
+                'description': podcast_data.get('description', ''),
+                'publisher': podcast_data.get('publisher', ''),
+                'language': podcast_data.get('language', 'en'),
+                'image_url': podcast_data.get('image', ''),
+                'thumbnail_url': podcast_data.get('thumbnail', ''),
+                'rss_url': podcast_data.get('rss', ''),
+                'total_episodes': podcast_data.get('total_episodes', 0),
+                'explicit_content': podcast_data.get('explicit_content', False),
+                'has_full_data': True
+            }
+
+            # Insert into podcasts table
+            insert_result = self.service_client.table("podcasts").insert(insert_data).execute()
+
+            if not insert_result.data:
+                logger.error(f"Failed to insert podcast {listennotes_id} into database")
+                return None
+
+            podcast_id = insert_result.data[0]['id']
+            logger.info(f"Successfully imported podcast '{podcast_data.get('title')}' (ID: {podcast_id}) from ListenNotes")
+
+            # Handle category mapping using first genre_id from ListenNotes
+            try:
+                genre_ids = podcast_data.get('genre_ids', [])
+                if genre_ids and len(genre_ids) > 0:
+                    first_genre_id = genre_ids[0]
+
+                    # Look up PodGround category from genre mapping table
+                    genre_mapping_result = self.service_client.table('category_genre') \
+                        .select('category_id') \
+                        .eq('genre_id', first_genre_id) \
+                        .limit(1) \
+                        .execute()
+
+                    if genre_mapping_result.data:
+                        category_id = genre_mapping_result.data[0]['category_id']
+
+                        # Add the category mapping to the junction table
+                        self.service_client.table('podcast_category_mappings') \
+                            .insert([{'podcast_id': podcast_id, 'category_id': category_id}]) \
+                            .execute()
+
+                        logger.info(f"Mapped genre_id {first_genre_id} to category {category_id}")
+            except Exception as cat_error:
+                logger.warning(f"Could not add category mapping: {cat_error}")
+
+            return podcast_id
+
+        except Exception as e:
+            logger.error(f"Error importing podcast {listennotes_id}: {e}")
+            return None
+
     def _create_follows_from_onboarding(self, user_id: str, favorite_podcast_ids: List[str], automatic_favorites: List[Dict] = None) -> Dict:
         """Create follows from onboarding data - single source of truth in user_podcast_follows"""
         if not self.service_client:
             return {"success": False, "error": "Service client not initialized"}
-        
+
         try:
             follows_data = []
             valid_podcast_ids = []
-            
+
             # Helper function to get valid podcast ID
             def get_valid_podcast_id(podcast_id: str) -> str:
-                """Get a valid podcast ID, checking both id and listennotes_id fields"""
+                """Get a valid podcast ID, checking both id and listennotes_id fields, importing if needed"""
                 try:
                     # First try direct ID lookup
                     result = self.service_client.table("podcasts").select("id").eq("id", podcast_id).execute()
                     if result.data:
                         return podcast_id
-                    
+
                     # Try listennotes_id lookup
                     result = self.service_client.table("podcasts").select("id").eq("listennotes_id", podcast_id).execute()
                     if result.data:
                         return result.data[0]["id"]
-                    
+
                     # Try featured_podcasts table by podcast_id (listennotes_id)
                     result = self.service_client.table("featured_podcasts").select("id").eq("podcast_id", podcast_id).execute()
                     if result.data:
                         return result.data[0]["id"]
-                    
-                    logger.warning(f"Podcast ID {podcast_id} not found in any table")
+
+                    # Podcast not found - try to import from ListenNotes
+                    logger.info(f"Podcast {podcast_id} not found locally, attempting to import from ListenNotes")
+                    imported_id = self._import_podcast_from_listennotes(podcast_id)
+                    if imported_id:
+                        logger.info(f"Successfully imported podcast {podcast_id} as {imported_id}")
+                        return imported_id
+
+                    logger.warning(f"Podcast ID {podcast_id} not found in any table and could not be imported")
                     return None
                 except Exception as e:
                     logger.error(f"Error looking up podcast ID {podcast_id}: {e}")
@@ -1751,42 +1952,44 @@ class SupabaseClient:
                 podcast_id = result.data[0]['id']
                 logger.info(f"Successfully imported claimed podcast '{podcast_title}' with ID {podcast_id}")
                 
-                # Handle category mappings if we got data from ListenNotes
+                # Handle category mapping using first genre_id from ListenNotes
                 try:
-                    if 'podcast_data' in locals() and podcast_data and 'categories' in podcast_data:
-                        category_ids_to_map = []
-                        for cat in podcast_data['categories']:
-                            category_name = cat.get('name', '').lower()
-                            if category_name:
-                                # Try to find matching category in our database
-                                category_result = self.service_client.table('podcast_categories') \
-                                    .select('id') \
-                                    .ilike('name', f'%{category_name}%') \
-                                    .limit(1) \
-                                    .execute()
-                                
-                                if category_result.data:
-                                    category_ids_to_map.append(category_result.data[0]['id'])
-                                    logger.info(f"Found matching category for '{category_name}': {category_result.data[0]['id']}")
-                        
-                        # Add the category mappings to the junction table
-                        if category_ids_to_map:
-                            mappings = [
-                                {'podcast_id': podcast_id, 'category_id': category_id}
-                                for category_id in category_ids_to_map
-                            ]
-                            
-                            mappings_result = self.service_client.table('podcast_category_mappings') \
-                                .insert(mappings) \
+                    if 'podcast_data' in locals() and podcast_data and 'genre_ids' in podcast_data:
+                        genre_ids = podcast_data.get('genre_ids', [])
+
+                        if genre_ids and len(genre_ids) > 0:
+                            # Take only the first genre_id
+                            first_genre_id = genre_ids[0]
+                            logger.info(f"Mapping first genre_id {first_genre_id} to PodGround category")
+
+                            # Look up PodGround category from genre mapping table
+                            genre_mapping_result = self.service_client.table('category_genre') \
+                                .select('category_id') \
+                                .eq('genre_id', first_genre_id) \
+                                .limit(1) \
                                 .execute()
-                            
-                            if mappings_result.data:
-                                logger.info(f"Added {len(category_ids_to_map)} category mappings for claimed podcast")
+
+                            if genre_mapping_result.data:
+                                category_id = genre_mapping_result.data[0]['category_id']
+
+                                # Add the category mapping to the junction table
+                                mapping = {'podcast_id': podcast_id, 'category_id': category_id}
+
+                                mappings_result = self.service_client.table('podcast_category_mappings') \
+                                    .insert([mapping]) \
+                                    .execute()
+
+                                if mappings_result.data:
+                                    logger.info(f"Mapped genre_id {first_genre_id} to category {category_id} for claimed podcast")
+                                else:
+                                    logger.warning(f"Failed to add category mapping for claimed podcast")
                             else:
-                                logger.warning(f"Failed to add category mappings for claimed podcast")
-                                
+                                logger.warning(f"No PodGround category mapping found for genre_id {first_genre_id}")
+                        else:
+                            logger.info("No genre_ids available from ListenNotes for this podcast")
+
                 except Exception as cat_error:
-                    logger.warning(f"Could not add category mappings for claimed podcast: {cat_error}")
+                    logger.warning(f"Could not add category mapping for claimed podcast: {cat_error}")
                 
                 return True
             else:
@@ -1796,6 +1999,108 @@ class SupabaseClient:
         except Exception as e:
             logger.error(f"Error importing claimed podcast to main table: {e}")
             return False
+
+    def is_user_platform_ready(self, user_id: str) -> Dict[str, Any]:
+        """
+        Check if user has completed onboarding AND has a verified podcast claim.
+        Users must meet both criteria to be visible/messageable on the platform.
+
+        Returns:
+            Dict with 'success', 'is_ready', and optional 'reason' for why they're not ready
+        """
+        if not self.service_client:
+            return {"success": False, "error": "Service client not initialized"}
+
+        try:
+            # Check onboarding completion
+            onboarding_result = self.service_client.table('user_onboarding').select(
+                'is_completed, step_5_completed'
+            ).eq('id', user_id).execute()
+
+            if not onboarding_result.data:
+                return {
+                    "success": True,
+                    "is_ready": False,
+                    "reason": "onboarding_not_started"
+                }
+
+            onboarding = onboarding_result.data[0]
+            if not onboarding.get('is_completed') or not onboarding.get('step_5_completed'):
+                return {
+                    "success": True,
+                    "is_ready": False,
+                    "reason": "onboarding_incomplete"
+                }
+
+            # Check verified podcast claim
+            claim_result = self.service_client.table('podcast_claims').select(
+                'id, claim_status, is_verified'
+            ).eq('user_id', user_id).eq('claim_status', 'verified').eq('is_verified', True).execute()
+
+            if not claim_result.data:
+                return {
+                    "success": True,
+                    "is_ready": False,
+                    "reason": "podcast_not_claimed"
+                }
+
+            # User has completed onboarding and has verified podcast claim
+            return {
+                "success": True,
+                "is_ready": True
+            }
+
+        except Exception as e:
+            logger.error(f"Error checking if user {user_id} is platform ready: {e}")
+            return {"success": False, "error": str(e)}
+
+    def filter_platform_ready_users(self, user_ids: List[str]) -> Dict[str, Any]:
+        """
+        Filter a list of user IDs to only include those who are platform ready.
+        Batch operation for efficiency.
+
+        Returns:
+            Dict with 'success' and 'ready_user_ids' list
+        """
+        if not self.service_client:
+            return {"success": False, "error": "Service client not initialized"}
+
+        try:
+            if not user_ids:
+                return {"success": True, "ready_user_ids": []}
+
+            # Get all onboarding statuses for these users
+            onboarding_result = self.service_client.table('user_onboarding').select(
+                'id, is_completed, step_5_completed'
+            ).in_('id', user_ids).execute()
+
+            # Filter to only completed onboarding
+            completed_user_ids = set()
+            for record in onboarding_result.data or []:
+                if record.get('is_completed') and record.get('step_5_completed'):
+                    completed_user_ids.add(record['id'])
+
+            if not completed_user_ids:
+                return {"success": True, "ready_user_ids": []}
+
+            # Get verified podcast claims for completed users
+            claims_result = self.service_client.table('podcast_claims').select(
+                'user_id'
+            ).in_('user_id', list(completed_user_ids)).eq(
+                'claim_status', 'verified'
+            ).eq('is_verified', True).execute()
+
+            # Get unique user IDs with verified claims
+            verified_user_ids = list(set(record['user_id'] for record in (claims_result.data or [])))
+
+            return {
+                "success": True,
+                "ready_user_ids": verified_user_ids
+            }
+
+        except Exception as e:
+            logger.error(f"Error filtering platform ready users: {e}")
+            return {"success": False, "error": str(e)}
 
 # Global instance and dependency function
 _supabase_client = None

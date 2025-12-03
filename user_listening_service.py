@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from supabase import Client
 import logging
 import os
+from datetime_utils import format_datetime_central
 
 logger = logging.getLogger(__name__)
 
@@ -363,8 +364,8 @@ class UserListeningService:
                         "progress_percentage": progress['progress_percentage'],
                         "playback_speed": progress.get('playback_speed', 1.0),
                         "is_completed": progress['is_completed'],
-                        "last_played_at": progress['last_played_at'],
-                        "completed_at": progress.get('completed_at')
+                        "last_played_at": format_datetime_central(progress['last_played_at']),
+                        "completed_at": format_datetime_central(progress.get('completed_at'))
                     }
                 }
 

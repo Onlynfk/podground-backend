@@ -13,17 +13,54 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import json
 
-from supabase_client import SupabaseClient
+from supabase_client import get_supabase_client
 from access_control import get_user_subscription_status
+from datetime_utils import format_datetime_central
 
 logger = logging.getLogger(__name__)
 
 class EventsService:
     """Service for managing events, registrations, and attendee interactions"""
-    
+
     def __init__(self):
-        self.supabase_client = SupabaseClient()
+        self.supabase_client = get_supabase_client()
         self.supabase = self.supabase_client.service_client
+
+        # R2 storage configuration for event images
+        self.r2_public_url = os.getenv('R2_PUBLIC_URL', '')
+        self.r2_events_bucket = os.getenv('R2_EVENTS_BUCKET_NAME', os.getenv('R2_BUCKET_NAME', ''))
+
+    def _generate_signed_image_url(self, filename: Optional[str]) -> Optional[str]:
+        """
+        Generate pre-signed URL for event image filename
+
+        Args:
+            filename: Just the filename (e.g., "banner.jpg" or "event-123.jpg")
+                     The bucket is determined by R2_EVENTS_BUCKET_NAME env var
+
+        Returns:
+            Pre-signed URL with expiry, or None if filename is None
+        """
+        if not filename:
+            return None
+
+        try:
+            # Use filename directly as storage path (bucket provides namespace)
+            storage_path = filename
+
+            # Generate signed URL with 1 hour expiry (caching handled by MediaService)
+            from media_service import MediaService
+            media_service = MediaService()
+            signed_url = media_service.generate_signed_url(
+                storage_path,
+                expiry=3600,
+                bucket=self.r2_events_bucket
+            )
+            return signed_url
+        except Exception as e:
+            logger.error(f"Failed to generate signed URL for event image {filename}: {e}")
+            # Return None on failure since we only have filename
+            return None
     
     async def get_events(
         self,
@@ -291,12 +328,19 @@ class EventsService:
             logger.error(f"Error scheduling reminders: {str(e)}")
     
     def _clean_event_response(self, event: Dict[str, Any]) -> Dict[str, Any]:
-        """Remove unwanted fields from a single event response"""
+        """Remove unwanted fields and sign image URLs in a single event response"""
         if isinstance(event, dict):
             # Remove the specified fields
             event.pop('meeting_url', None)
             event.pop('replay_video_url', None)
             event.pop('tags', None)
+            event.pop('timezone', None)
+
+            # Note: Event datetimes are already stored in Central Time, no conversion needed
+
+            # Generate pre-signed URL for event image (with caching)
+            if 'image_url' in event and event['image_url']:
+                event['image_url'] = self._generate_signed_image_url(event['image_url'])
         return event
     
     def _clean_event_responses(self, events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

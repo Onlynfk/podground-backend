@@ -86,11 +86,12 @@ class ClaimedPodcastImportService:
             try:
                 if self.listennotes_api_key:
                     from listennotes_client import ListenNotesClient
-                    
+
                     ln_client = ListenNotesClient(self.listennotes_api_key)
-                    podcast_data = ln_client.get_podcast_by_id(listennotes_id)
-                    
-                    if podcast_data:
+                    podcast_result = ln_client.get_podcast_by_id(listennotes_id)
+
+                    if podcast_result and podcast_result.get('success') and podcast_result.get('data'):
+                        podcast_data = podcast_result['data']
                         # Insert with full data from ListenNotes
                         insert_data = {
                             'listennotes_id': listennotes_id,
@@ -152,42 +153,44 @@ class ClaimedPodcastImportService:
                 logger.error(f"Failed to insert/update claimed podcast '{podcast_title}' into main table")
                 return False
 
-            # Try to add category mappings if we got data from ListenNotes
+            # Try to add category mapping using first genre_id from ListenNotes
             try:
-                if 'podcast_data' in locals() and podcast_data and 'categories' in podcast_data:
-                    category_ids_to_map = []
-                    for cat in podcast_data['categories']:
-                        category_name = cat.get('name', '').lower()
-                        if category_name:
-                            # Try to find matching category in our database
-                            category_result = self.supabase.table('podcast_categories') \
-                                .select('id') \
-                                .ilike('name', f'%{category_name}%') \
-                                .limit(1) \
-                                .execute()
+                if 'podcast_data' in locals() and podcast_data and 'genre_ids' in podcast_data:
+                    genre_ids = podcast_data.get('genre_ids', [])
 
-                            if category_result.data:
-                                category_ids_to_map.append(category_result.data[0]['id'])
-                                logger.info(f"Found matching category for '{category_name}': {category_result.data[0]['id']}")
+                    if genre_ids and len(genre_ids) > 0:
+                        # Take only the first genre_id
+                        first_genre_id = genre_ids[0]
+                        logger.info(f"Mapping first genre_id {first_genre_id} to PodGround category")
 
-                    # Add the category mappings to the junction table
-                    if category_ids_to_map:
-                        mappings = [
-                            {'podcast_id': podcast_id, 'category_id': category_id}
-                            for category_id in category_ids_to_map
-                        ]
-
-                        mappings_result = self.supabase.table('podcast_category_mappings') \
-                            .insert(mappings) \
+                        # Look up PodGround category from genre mapping table
+                        genre_mapping_result = self.supabase.table('category_genre') \
+                            .select('category_id') \
+                            .eq('genre_id', first_genre_id) \
+                            .limit(1) \
                             .execute()
 
-                        if mappings_result.data:
-                            logger.info(f"Added {len(category_ids_to_map)} category mappings for claimed podcast")
+                        if genre_mapping_result.data:
+                            category_id = genre_mapping_result.data[0]['category_id']
+
+                            # Add the category mapping to the junction table
+                            mapping = {'podcast_id': podcast_id, 'category_id': category_id}
+
+                            mappings_result = self.supabase.table('podcast_category_mappings') \
+                                .insert([mapping]) \
+                                .execute()
+
+                            if mappings_result.data:
+                                logger.info(f"Mapped genre_id {first_genre_id} to category {category_id} for claimed podcast")
+                            else:
+                                logger.warning(f"Failed to add category mapping for claimed podcast")
                         else:
-                            logger.warning(f"Failed to add category mappings for claimed podcast")
+                            logger.warning(f"No PodGround category mapping found for genre_id {first_genre_id}")
+                    else:
+                        logger.info("No genre_ids available from ListenNotes for this podcast")
 
             except Exception as cat_error:
-                logger.warning(f"Could not add category mappings for claimed podcast: {cat_error}")
+                logger.warning(f"Could not add category mapping for claimed podcast: {cat_error}")
 
             return True
                 

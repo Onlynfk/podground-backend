@@ -50,12 +50,14 @@ class AICategorization:
             categories_info = []
             for category in available_categories:
                 keywords = ", ".join(category.get("keywords", []))
-                categories_info.append(f"- {category['name']}: {category['description']} (Keywords: {keywords})")
-            
+                # Use display_name for clearer categorization
+                display_name = category.get('display_name', category['name'])
+                categories_info.append(f"- {display_name}: {category['description']} (Keywords: {keywords})")
+
             categories_list = "\n".join(categories_info)
             
             prompt = f"""
-You are a content categorization AI. Your job is to classify social media posts into the most appropriate category.
+You are a content categorization AI for a podcasting community. Your job is to classify posts from podcasters into the most appropriate category.
 
 Available Categories:
 {categories_list}
@@ -63,12 +65,20 @@ Available Categories:
 Post Content:
 "{content}"
 
+Context: This is a post from a podcaster in a podcasting community. Posts are typically about:
+- Growing their podcast audience and marketing strategies
+- Equipment, software, and tools for podcast production
+- Looking for or offering to be a podcast guest
+- Questions about podcasting techniques, best practices, or technical issues
+- Celebrating podcast milestones like downloads, launches, or achievements
+
 Instructions:
-1. Analyze the post content carefully
-2. Choose the MOST appropriate single category from the list above
-3. Respond with ONLY the category name (e.g., "technology", "business", etc.)
-4. If the content doesn't clearly fit any specific category, use "general"
-5. Do not provide explanations, just the category name
+1. Carefully read the post and identify the primary topic or intent
+2. Match it to the MOST appropriate category based on the main focus
+3. Respond with ONLY the category name exactly as shown above (e.g., "grow your audience", "gears & tools", etc.)
+4. Use the category name in lowercase
+5. If truly ambiguous, prefer "ask a podcast question" for questions or "general" for other content
+6. Do not provide explanations, just the category name
 
 Category:"""
 
@@ -96,25 +106,47 @@ Category:"""
                 
             # Extract and validate the category
             predicted_category = response.text.strip().lower()
-            
-            # Find matching category by name
+
+            # Try to match by display_name first (more user-friendly)
+            for category in available_categories:
+                if category.get("display_name", "").lower() == predicted_category:
+                    logger.info(f"Post categorized as '{category['display_name']}' by AI")
+                    return category["id"]
+
+            # Try to match by name field
             for category in available_categories:
                 if category["name"].lower() == predicted_category:
                     logger.info(f"Post categorized as '{category['name']}' by AI")
                     return category["id"]
-            
-            # If no exact match found, try partial matching
+
+            # If no exact match found, try partial matching on display_name
+            for category in available_categories:
+                display_name_lower = category.get("display_name", "").lower()
+                if predicted_category in display_name_lower or display_name_lower in predicted_category:
+                    logger.info(f"Post categorized as '{category['display_name']}' by AI (partial match)")
+                    return category["id"]
+
+            # Try partial matching on name as fallback
             for category in available_categories:
                 if predicted_category in category["name"].lower() or category["name"].lower() in predicted_category:
-                    logger.info(f"Post categorized as '{category['name']}' by AI (partial match)")
+                    logger.info(f"Post categorized as '{category['name']}' by AI (partial name match)")
                     return category["id"]
             
-            # Fallback to 'general' category
+            # Fallback: try to find 'general' or 'ask a podcast question' category
             for category in available_categories:
-                if category["name"].lower() == "general":
+                display_name_lower = category.get("display_name", "").lower()
+                name_lower = category["name"].lower()
+                if name_lower == "general" or display_name_lower == "general":
                     logger.warning(f"AI returned unrecognized category '{predicted_category}', using 'general'")
                     return category["id"]
-            
+
+            # If no 'general', try 'ask a podcast question' as fallback
+            for category in available_categories:
+                display_name_lower = category.get("display_name", "").lower()
+                if "ask" in display_name_lower and "question" in display_name_lower:
+                    logger.warning(f"AI returned unrecognized category '{predicted_category}', using 'ask a podcast question'")
+                    return category["id"]
+
             logger.error(f"No suitable category found for AI prediction '{predicted_category}'")
             return None
             

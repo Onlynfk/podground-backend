@@ -85,7 +85,7 @@ class ClaimResponse(BaseModel):
 
 # Onboarding Models
 class OnboardingRequest(BaseModel):
-    podcasting_experience: str  # "0-1_year", "1-3_years", "5_years_plus"
+    podcasting_experience: str  # "0-1_year", "1-3_years", "3_years_plus"
     category_ids: List[str]  # Foreign keys to podcast_categories table (UUIDs)
     location_id: int  # Foreign key to states_countries table
     network_name: Optional[str] = None
