@@ -6,36 +6,44 @@ from enum import Enum
 # Import post models
 from post_models import *
 
+
 class WaitlistRequest(BaseModel):
     name: str
     email: EmailStr
     variant: str  # "A" or "B"
     captcha_token: str
 
+
 class WaitlistResponse(BaseModel):
     success: bool
     message: str
+
 
 class MicrograntWaitlistRequest(BaseModel):
     name: str
     email: EmailStr
     captcha_token: str
 
+
 class MicrograntWaitlistResponse(BaseModel):
     success: bool
     message: str
 
+
 class ABVariantResponse(BaseModel):
     variant: str
+
 
 class TokenResponse(BaseModel):
     token: str
     expires_in: int  # seconds
 
+
 # Authentication Models
 class SignUpRequest(BaseModel):
     name: str
     email: EmailStr
+
 
 class SignInRequest(BaseModel):
     email: EmailStr
@@ -44,9 +52,11 @@ class SignInRequest(BaseModel):
 class ResendMagicLinkRequest(BaseModel):
     email: EmailStr
 
+
 class CodeExchangeRequest(BaseModel):
     code: str
     state: Optional[str] = None
+
 
 class CodeExchangeResponse(BaseModel):
     ok: bool
@@ -54,6 +64,7 @@ class CodeExchangeResponse(BaseModel):
     error: Optional[str] = None
     redirect_url: Optional[str] = None  # Suggested redirect after success
     access_token: Optional[str] = None  # Session token for cross-origin auth
+
 
 class AuthResponse(BaseModel):
     success: bool
@@ -71,17 +82,21 @@ class PodcastSearchResponse(BaseModel):
     image: str
     publisher: str
 
+
 class PodcastSearchResults(BaseModel):
     results: List[PodcastSearchResponse]
     total: int
 
+
 class VerifyClaimByCodeRequest(BaseModel):
     verification_code: str
+
 
 class ClaimResponse(BaseModel):
     success: bool
     message: str
     claim_id: Optional[str] = None
+
 
 # Onboarding Models
 class OnboardingRequest(BaseModel):
@@ -94,15 +109,19 @@ class OnboardingRequest(BaseModel):
     wants_to_be_guest: bool
     favorite_podcast_ids: List[str]
 
+
 class OnboardingResponse(BaseModel):
     success: bool
     message: str
 
+
 class CategoryResponse(BaseModel):
     categories: List[str]
 
+
 class NetworkResponse(BaseModel):
     networks: List[str]
+
 
 # Onboarding Status Models
 class OnboardingStatusResponse(BaseModel):
@@ -112,11 +131,13 @@ class OnboardingStatusResponse(BaseModel):
     has_pending_podcast_claims: bool
     has_verified_podcast_claims: bool
 
+
 class OnboardingProfileResponse(BaseModel):
     success: bool
     data: Optional[Dict] = None
     is_completed: bool
     current_step: int
+
 
 # Podcast Claims Models
 class PodcastClaimData(BaseModel):
@@ -129,10 +150,12 @@ class PodcastClaimData(BaseModel):
     created_at: str
     verified_at: Optional[str] = None
 
+
 # Step-by-step onboarding models
 class OnboardingStepRequest(BaseModel):
     step: int
     data: Dict
+
 
 # Podcast Categories Models
 class PodcastCategoryData(BaseModel):
@@ -142,13 +165,16 @@ class PodcastCategoryData(BaseModel):
     active: bool
     image_url: Optional[str] = None
 
+
 class PodcastCategoriesResponse(BaseModel):
     success: bool
     categories: List[PodcastCategoryData]
 
+
 # RSS Feed Parser Models
 class RSSFeedRequest(BaseModel):
     rss_url: str
+
 
 class PodcastFeedInfo(BaseModel):
     title: str
@@ -159,10 +185,12 @@ class PodcastFeedInfo(BaseModel):
     image_url: Optional[str] = None
     episode_count: Optional[int] = None
 
+
 class RSSFeedResponse(BaseModel):
     success: bool
     message: str
     podcast_info: Optional[PodcastFeedInfo] = None
+
 
 # States and Countries Models
 class StateCountryData(BaseModel):
@@ -176,10 +204,12 @@ class StateCountryData(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
 
+
 class StatesCountriesResponse(BaseModel):
     success: bool
     data: List[str]
     total: int
+
 
 class VerifyCodeRequest(BaseModel):
     email: str
@@ -218,6 +248,7 @@ class UpdateProfileRequest(BaseModel):
     bio: Optional[str] = None
     location: Optional[str] = None
 
+
 class UserProfileResponse(BaseModel):
     id: str
     name: Optional[str] = None
@@ -234,6 +265,7 @@ class UserProfileResponse(BaseModel):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
+
 class AvatarUploadResponse(BaseModel):
     success: bool
     avatar_url: Optional[str] = None
@@ -245,6 +277,7 @@ class TopicResponse(BaseModel):
     name: str
     category: Optional[str] = None
 
+
 class UserInterestResponse(BaseModel):
     id: str
     topic_id: str
@@ -252,8 +285,10 @@ class UserInterestResponse(BaseModel):
     topic_category: Optional[str] = None
     created_at: str
 
+
 class UpdateInterestsRequest(BaseModel):
     topic_ids: List[str]
+
 
 class AddInterestRequest(BaseModel):
     topic_id: str
@@ -267,6 +302,7 @@ class ConnectionUserData(BaseModel):
     bio: Optional[str] = None
     podcast_name: Optional[str] = None
 
+
 class ConnectionResponse(BaseModel):
     connection_id: str
     user: ConnectionUserData
@@ -275,17 +311,21 @@ class ConnectionResponse(BaseModel):
     created_at: str
     accepted_at: Optional[str] = None
 
+
 class ConnectionRequestResponse(BaseModel):
     request_id: str
     requester: ConnectionUserData
     created_at: str
 
+
 class ConnectionActionRequest(BaseModel):
     pass  # No body needed, user_id from path
+
 
 class ConnectionsListResponse(BaseModel):
     connections: List[ConnectionResponse]
     total: int
+
 
 class ConnectionStatusResponse(BaseModel):
     connected: bool
@@ -308,9 +348,11 @@ class ActivityResponse(BaseModel):
     podcast: Optional[Dict[str, Any]] = None
     episode: Optional[Dict[str, Any]] = None
 
+
 class ActivityFeedResponse(BaseModel):
     activities: List[ActivityResponse]
     total: int
+
 
 class ActivityStatsResponse(BaseModel):
     period_days: int
@@ -337,20 +379,24 @@ class MessageMediaData(BaseModel):
     created_at: str
     updated_at: str
 
+
 class SendMessageWithMediaRequest(BaseModel):
     content: Optional[str] = None
-    message_type: str = 'text'
+    message_type: str = "text"
     reply_to_message_id: Optional[str] = None
+
 
 class MessageMediaUploadResponse(BaseModel):
     success: bool
     data: Optional[Dict[str, Any]] = None
     media: Optional[List[MessageMediaData]] = None
 
+
 # Refresh Session Models
 class RefreshSessionRequest(BaseModel):
     # No longer need refresh_token in body - will read from HttpOnly cookie
     pass
+
 
 class RefreshSessionResponse(BaseModel):
     ok: bool
@@ -367,4 +413,3 @@ class GlobalSearchResponse(BaseModel):
     total_results: int
     results: Dict[str, List[Dict[str, Any]]]
     cached: bool
-

@@ -1,3 +1,4 @@
+import database
 from pydantic import BaseModel, Field, validator, model_validator
 from typing import Optional, List, Literal, Dict, Any
 from datetime import datetime
@@ -32,6 +33,39 @@ class MediaType(str, Enum):
     IMAGE = "image"
     VIDEO = "video"
     AUDIO = "audio"
+
+
+class PodcastExperience(str, Enum):
+    zero_to_one = "0-1 years"
+    one_to_two = "1-2 years"
+    two_to_three = "2-3 years"
+
+
+class PodcastChallenge(str, Enum):
+    growth = "Growing my audience"
+    monetizing = "Monetizing"
+    engagement = "Engaging with my listeners"
+    podcast_promotion = "Promoting my podcast"
+    fresh_episode_ideas = "Generating fresh episode Ideas"
+    finding_guests = "Finding aligned guests"
+    podcast_edit = "Producing and editing my podcast"
+    something_else = "Something else"
+
+
+class YesNo(str, Enum):
+    yes = "Yes"
+    no = "No"
+
+
+class HeardAbout(str, Enum):
+    facebook = "Facebook"
+    instagram = "Instagram"
+    thread = "Threads"
+    newsletter = "Newsletter"
+    email = "Email"
+    third_party = "Third party website"
+    grant_database = "Grant database"
+    other = "Other"
 
 
 # Request Models
@@ -397,3 +431,38 @@ class PostReactionsResponse(BaseModel):
     total_count: int
     user_reaction: Optional[str] = None  # Current user's reaction if any
 
+
+class CreateGrantApplicationRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    email: str = Field(..., min_length=5, max_length=255)
+    podcast_title: str = Field(..., min_length=1, max_length=200)
+    podcast_link: str = Field(..., min_length=5, max_length=500)
+    podcast_experience: PodcastExperience
+    why_started: str = Field(..., min_length=10, max_length=2000)
+    challenges: List[PodcastChallenge]
+    other_challenge_text: Optional[str] = Field(None, max_length=500)
+    biggest_challenge: str = Field(..., min_length=10, max_length=1000)
+    goals_next_year: str = Field(..., min_length=10, max_length=2000)
+    steps_to_achieve: str = Field(..., min_length=10, max_length=2000)
+    proud_episode_link: Optional[str] = Field(None, min_length=5, max_length=500)
+    willing_to_share_public: YesNo
+    heard_about: HeardAbout
+
+
+class CreateGrantApplicationResponse(BaseModel):
+    id: str
+    name: str
+    email: str
+    podcast_title: str
+    podcast_link: str
+    podcast_experience: str
+    why_started: str
+    challenges: List[str]
+    other_challenge_text: Optional[str] = None
+    biggest_challenge: str
+    goals_next_year: str
+    steps_to_achieve: str
+    proud_episode_link: str
+    willing_to_share_public: str
+    heard_about: str
+    created_at: datetime
