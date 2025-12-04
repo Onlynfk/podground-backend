@@ -316,7 +316,6 @@ class CommentsResponse(BaseModel):
     comments: List[CommentResponse]
     next_cursor: Optional[str] = None
     has_more: bool = False
-    
 
 
 class TopicsResponse(BaseModel):
@@ -327,6 +326,7 @@ class ResourcesResponse(BaseModel):
     resources: List[Dict[str, Any]]
     total_count: Optional[int] = None
     has_more: Optional[bool] = None
+
 
 class EventsResponse(BaseModel):
     events: List[Dict[str, Any]]
@@ -444,7 +444,9 @@ class CreateGrantApplicationRequest(BaseModel):
     biggest_challenge: str = Field(..., min_length=10, max_length=1000)
     goals_next_year: str = Field(..., min_length=10, max_length=2000)
     steps_to_achieve: str = Field(..., min_length=10, max_length=2000)
-    proud_episode_link: Optional[str] = Field(None, min_length=5, max_length=500)
+    proud_episode_link: Optional[str] = Field(
+        None, min_length=5, max_length=500
+    )
     willing_to_share: YesNo
     heard_about: HeardAbout
 
@@ -462,7 +464,7 @@ class CreateGrantApplicationResponse(BaseModel):
     biggest_challenge: str
     goals_next_year: str
     steps_to_achieve: str
-    proud_episode_link: str
+    proud_episode_link: Optional[str] = None
     willing_to_share: str
     heard_about: str
     created_at: datetime

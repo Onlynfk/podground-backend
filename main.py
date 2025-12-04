@@ -8215,28 +8215,11 @@ async def create_grant_application(
         if response.get("success"):
             new_application = response.get("data")
         
+            print(new_application)
             # Log the successful application
             logger.info(f"New grant application created for {grant_application.email}: {grant_application.podcast_title}")
-
         # Return response using the response model
-            return CreateGrantApplicationResponse(
-                id=str(new_application.id),
-                name=new_application.name,
-                email=new_application.email,
-                podcast_title=new_application.podcast_title,
-                podcast_link=new_application.podcast_link,
-                podcast_experience=new_application.podcasting_experience.value if hasattr(new_application.podcasting_experience, 'value') else str(new_application.podcasting_experience),
-                why_started=new_application.why_started,
-                challenges=[challenge.value if hasattr(challenge, 'value') else str(challenge) for challenge in new_application.challenges],
-                other_challenge_text=new_application.other_challenge_text,
-                biggest_challenge=new_application.biggest_challenge,
-                goals_next_year=new_application.goals_next_year,
-                steps_to_achieve=new_application.steps_to_achieve,
-                proud_episode_link=new_application.proud_episode_link,
-                willing_to_share_public=new_application.willing_to_share_public.value if hasattr(new_application.willing_to_share_public, 'value') else str(new_application.willing_to_share_public),
-                heard_about=new_application.heard_about.value if hasattr(new_application.heard_about, 'value') else str(new_application.heard_about),
-                created_at=new_application.created_at
-            )
+            return CreateGrantApplicationResponse(**new_application)
 
     except HTTPException:
         # Re-raise HTTP exceptions as they are
