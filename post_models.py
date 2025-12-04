@@ -437,7 +437,7 @@ class CreateGrantApplicationRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=255)
     podcast_title: str = Field(..., min_length=1, max_length=200)
     podcast_link: str = Field(..., min_length=5, max_length=500)
-    podcast_experience: PodcastExperience
+    podcasting_experience: PodcastExperience
     why_started: str = Field(..., min_length=10, max_length=2000)
     challenges: List[PodcastChallenge]
     other_challenge_text: Optional[str] = Field(None, max_length=500)
@@ -445,7 +445,7 @@ class CreateGrantApplicationRequest(BaseModel):
     goals_next_year: str = Field(..., min_length=10, max_length=2000)
     steps_to_achieve: str = Field(..., min_length=10, max_length=2000)
     proud_episode_link: Optional[str] = Field(None, min_length=5, max_length=500)
-    willing_to_share_public: YesNo
+    willing_to_share: YesNo
     heard_about: HeardAbout
 
 
@@ -455,7 +455,7 @@ class CreateGrantApplicationResponse(BaseModel):
     email: str
     podcast_title: str
     podcast_link: str
-    podcast_experience: str
+    podcasting_experience: str
     why_started: str
     challenges: List[str]
     other_challenge_text: Optional[str] = None
@@ -463,6 +463,6 @@ class CreateGrantApplicationResponse(BaseModel):
     goals_next_year: str
     steps_to_achieve: str
     proud_episode_link: str
-    willing_to_share_public: str
+    willing_to_share: str
     heard_about: str
     created_at: datetime

@@ -155,7 +155,7 @@ from post_models import (
     CreateGrantApplicationResponse
 )
 from customerio_client import CustomerIOClient
-from supabase_client import SupabaseClient
+from supabase_client import SupabaseClient, get_supabase_client
 from listennotes_client import ListenNotesClient
 from podcast_endpoints import router as podcast_router
 from jwt_utils import get_user_email_from_token
@@ -7880,69 +7880,55 @@ async def debug_customerio():
 async def create_grant_application(
     grant_application: CreateGrantApplicationRequest,
     request: Request,
-    db: Session = Depends(get_db)
+    supabase: SupabaseClient = Depends(get_supabase_client) # Changed dependency
 ):
     """
     Create a new grant application
     """
     try:
-        # Validate email format using regex
         email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
         if not re.match(email_pattern, grant_application.email):
             raise HTTPException(status_code=400, detail="Invalid email format")
 
-        # Check if email already exists (unique constraint in database)
-        existing_app = db.query(database.GrantApplications).filter(
-            database.GrantApplications.email == grant_application.email
-        ).first()
-        if existing_app:
-            raise HTTPException(status_code=400, detail="An application with this email already exists")
+        supabase_result = supabase_client.service_client.table("grant_applications").select("*").eq("email",
+            grant_application.email).execute()
 
-        # Create new grant application record
-        new_application = database.GrantApplications(
-            name=grant_application.name,
-            email=grant_application.email,
-            podcast_title=grant_application.podcast_title,
-            podcast_link=grant_application.podcast_link,
-            podcasting_experience=grant_application.podcast_experience,
-            why_started=grant_application.why_started,
-            challenges=grant_application.challenges,  # This will be stored as an array in the DB
-            other_challenge_text=grant_application.other_challenge_text,
-            biggest_challenge=grant_application.biggest_challenge,
-            goals_next_year=grant_application.goals_next_year,
-            steps_to_achieve=grant_application.steps_to_achieve,
-            proud_episode_link=grant_application.proud_episode_link,
-            willing_to_share_public=grant_application.willing_to_share_public,
-            heard_about=grant_application.heard_about
-        )
+        if supabase_result.data:
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "success": False,
+                        "message": "Email already exists in grant application",
+                    },
+                )
 
-        # Add to database
-        db.add(new_application)
-        db.commit()
-        db.refresh(new_application)
-
-        # Log the successful application
-        logger.info(f"New grant application created for {grant_application.email}: {grant_application.podcast_title}")
+        response = supabase.create_grant_application(grant_application.model_dump()) 
+        new_application = None
+        if response.get("success"):
+            new_application = response.get("data")
+        
+            # Log the successful application
+            logger.info(f"New grant application created for {grant_application.email}: {grant_application.podcast_title}")
 
         # Return response using the response model
-        return CreateGrantApplicationResponse(
-            id=str(new_application.id),
-            name=new_application.name,
-            email=new_application.email,
-            podcast_title=new_application.podcast_title,
-            podcast_link=new_application.podcast_link,
-            podcast_experience=new_application.podcasting_experience.value,
-            why_started=new_application.why_started,
-            challenges=[challenge.value for challenge in new_application.challenges],
-            other_challenge_text=new_application.other_challenge_text,
-            biggest_challenge=new_application.biggest_challenge,
-            goals_next_year=new_application.goals_next_year,
-            steps_to_achieve=new_application.steps_to_achieve,
-            proud_episode_link=new_application.proud_episode_link,
-            willing_to_share_public=new_application.willing_to_share_public.value,
-            heard_about=new_application.heard_about.value,
-            created_at=new_application.created_at
-        )
+            return CreateGrantApplicationResponse(
+                id=str(new_application.id),
+                name=new_application.name,
+                email=new_application.email,
+                podcast_title=new_application.podcast_title,
+                podcast_link=new_application.podcast_link,
+                podcast_experience=new_application.podcasting_experience.value if hasattr(new_application.podcasting_experience, 'value') else str(new_application.podcasting_experience),
+                why_started=new_application.why_started,
+                challenges=[challenge.value if hasattr(challenge, 'value') else str(challenge) for challenge in new_application.challenges],
+                other_challenge_text=new_application.other_challenge_text,
+                biggest_challenge=new_application.biggest_challenge,
+                goals_next_year=new_application.goals_next_year,
+                steps_to_achieve=new_application.steps_to_achieve,
+                proud_episode_link=new_application.proud_episode_link,
+                willing_to_share_public=new_application.willing_to_share_public.value if hasattr(new_application.willing_to_share_public, 'value') else str(new_application.willing_to_share_public),
+                heard_about=new_application.heard_about.value if hasattr(new_application.heard_about, 'value') else str(new_application.heard_about),
+                created_at=new_application.created_at
+            )
 
     except HTTPException:
         # Re-raise HTTP exceptions as they are

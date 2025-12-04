@@ -1,5 +1,5 @@
 import uuid
-from typing import Text
+import json
 from sqlalchemy.dialects.postgresql import ENUM, ARRAY
 from sqlalchemy import (
     create_engine,
@@ -10,14 +10,15 @@ from sqlalchemy import (
     Boolean,
     ForeignKey,
     UUID,
+    Text,
 )
+from sqlalchemy.types import TypeDecorator
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime, timezone
 import os
 from dotenv import load_dotenv
-from enum import Enum
-from sqlalchemy import String, Text
+from post_models import PodcastExperience, HeardAbout, PodcastChallenge, YesNo
 
 load_dotenv()
 
@@ -32,6 +33,34 @@ engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
+
+
+class JsonEncodedList(TypeDecorator):
+    """Encodes a Python list into a JSON string."""
+
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        # Convert list of enums to list of strings
+        return json.dumps([item.value for item in value])
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        # Convert list of strings back to list of enums
+        return [PodcastChallenge(item) for item in json.loads(value)]
+
+
+# Conditional type for challenges column
+if "postgresql" in DATABASE_URL:
+    challenges_column_type = ARRAY(
+        ENUM(PodcastChallenge, name="podcast_challenge", create_type=False)
+    )
+else:
+    challenges_column_type = JsonEncodedList
 
 
 class ABCounter(Base):
@@ -115,9 +144,7 @@ class GrantApplications(Base):
     )
     why_started = Column(Text, nullable=False)
     challenges = Column(
-        ARRAY(
-            ENUM(PodcastChallenge, name="podcast_challenge", create_type=False)
-        ),
+        challenges_column_type,
         nullable=False,
     )
     other_challenge_text = Column(Text, nullable=True)
