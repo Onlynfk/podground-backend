@@ -16,7 +16,8 @@ from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime, timezone
 import os
 from dotenv import load_dotenv
-from post_models import PodcastExperience, HeardAbout, PodcastChallenge, YesNo
+from enum import Enum
+from sqlalchemy import String, Text
 
 load_dotenv()
 
