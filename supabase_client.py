@@ -1505,6 +1505,42 @@ class SupabaseClient:
         except Exception as e:
             logger.error(f"Error getting states/countries: {str(e)}")
             return {"success": False, "error": str(e)}
+
+    def create_grant_application(self, application_data: Dict) -> Dict:
+        """Create a new grant application in Supabase."""
+        if not self.service_client:
+            return {"success": False, "error": "Service client not initialized"}
+
+        try:
+            # Convert enum values to strings for Supabase
+# Convert all enums to their string values
+            application_data['podcasting_experience'] = application_data['podcasting_experience'].value
+            application_data['challenges'] = [c.value for c in application_data['challenges']]
+            application_data['willing_to_share'] = application_data['willing_to_share'].value
+            application_data['heard_about'] = application_data['heard_about'].value
+            result = self.service_client.table("grant_applications").insert(application_data).execute()
+
+            if result.data:
+                logger.info(f"Created grant application for {application_data.get('email')}")
+                return {"success": True, "data": result.data[0]}
+            else:
+                logger.error(f"Failed to create grant application: {result}")
+                # Attempt to parse a more specific error
+                try:
+                    error_json = json.loads(result.get('error', '{}'))
+                    error_message = error_json.get('message', 'Failed to create grant application')
+                    if 'duplicate key' in error_message:
+                         return {"success": False, "error": "An application with this email or podcast link already exists."}
+                except (json.JSONDecodeError, AttributeError):
+                    error_message = 'Failed to create grant application'
+
+                return {"success": False, "error": error_message}
+
+        except Exception as e:
+            logger.error(f"Error creating grant application in Supabase: {str(e)}")
+            if "duplicate key" in str(e).lower():
+                return {"success": False, "error": "An application with this email or podcast link already exists."}
+            return {"success": False, "error": str(e)}
     
     # Waitlist methods (moved from SQLite to Supabase)
     def add_waitlist_email(self, email: str, first_name: str, last_name: str, variant: str) -> Dict:
