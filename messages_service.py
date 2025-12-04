@@ -19,39 +19,61 @@ class MessagesService:
             supabase_client.service_client
         )  # Raw Supabase client for queries
 
-    def _clean_message_response(self, message: Dict[str, Any]) -> Dict[str, Any]:
+    def _clean_message_response(
+        self, message: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """Remove internal fields from message response and format datetimes"""
         if isinstance(message, dict):
             # Remove search_vector field if present
             message.pop("search_vector", None)
             # Remove podcast sharing fields if null
-            if message.get('shared_podcast_id') is None:
-                message.pop('shared_podcast_id', None)
-            if message.get('shared_episode_id') is None:
-                message.pop('shared_episode_id', None)
+            if message.get("shared_podcast_id") is None:
+                message.pop("shared_podcast_id", None)
+            if message.get("shared_episode_id") is None:
+                message.pop("shared_episode_id", None)
             # Format datetime fields to Central Time
-            if 'created_at' in message:
-                message['created_at'] = format_datetime_central(message['created_at'])
-            if 'edited_at' in message:
-                message['edited_at'] = format_datetime_central(message['edited_at'])
-            if 'updated_at' in message:
-                message['updated_at'] = format_datetime_central(message['updated_at'])
+            if "created_at" in message:
+                message["created_at"] = format_datetime_central(
+                    message["created_at"]
+                )
+            if "edited_at" in message:
+                message["edited_at"] = format_datetime_central(
+                    message["edited_at"]
+                )
+            if "updated_at" in message:
+                message["updated_at"] = format_datetime_central(
+                    message["updated_at"]
+                )
         return message
 
-    def _clean_conversation_response(self, conversation: Dict[str, Any]) -> Dict[str, Any]:
+    def _clean_conversation_response(
+        self, conversation: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """Format datetime fields in conversation response"""
         if isinstance(conversation, dict):
-            if 'created_at' in conversation:
-                conversation['created_at'] = format_datetime_central(conversation['created_at'])
-            if 'updated_at' in conversation:
-                conversation['updated_at'] = format_datetime_central(conversation['updated_at'])
+            if "created_at" in conversation:
+                conversation["created_at"] = format_datetime_central(
+                    conversation["created_at"]
+                )
+            if "updated_at" in conversation:
+                conversation["updated_at"] = format_datetime_central(
+                    conversation["updated_at"]
+                )
             # Format last_message datetime if present
-            if 'last_message' in conversation and isinstance(conversation['last_message'], dict):
-                if 'created_at' in conversation['last_message']:
-                    conversation['last_message']['created_at'] = format_datetime_central(conversation['last_message']['created_at'])
+            if "last_message" in conversation and isinstance(
+                conversation["last_message"], dict
+            ):
+                if "created_at" in conversation["last_message"]:
+                    conversation["last_message"]["created_at"] = (
+                        format_datetime_central(
+                            conversation["last_message"]["created_at"]
+                        )
+                    )
         return conversation
 
-    def _clean_messages_response(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _clean_messages_response(
+        self, messages: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """Clean multiple messages by removing internal fields"""
         return [self._clean_message_response(msg) for msg in messages]
 
@@ -266,13 +288,13 @@ class MessagesService:
                 conversation.pop("participants", None)
 
                 # Remove fields as requested
-                conversation.pop('podcast_id', None)
-                conversation.pop('episode_id', None)
-                conversation.pop('settings', None)
-                conversation.pop('user_settings', None)
-                conversation.pop('title', None)
-                conversation.pop('last_message_at', None)
-                conversation.pop('last_message_id', None)
+                conversation.pop("podcast_id", None)
+                conversation.pop("episode_id", None)
+                conversation.pop("settings", None)
+                conversation.pop("user_settings", None)
+                conversation.pop("title", None)
+                conversation.pop("last_message_at", None)
+                conversation.pop("last_message_id", None)
 
                 # Format datetime fields
                 self._clean_conversation_response(conversation)
@@ -290,34 +312,46 @@ class MessagesService:
         try:
             # Only support direct messages between 2 users
             if len(participant_ids) != 1:
-                return {"success": False, "error": "Direct messages must be between exactly 2 users"}
+                return {
+                    "success": False,
+                    "error": "Direct messages must be between exactly 2 users",
+                }
 
             recipient_id = participant_ids[0]
 
             # Validate both users are platform ready (completed onboarding + verified podcast claim)
             from supabase_client import get_supabase_client
+
             supabase_client = get_supabase_client()
 
             # Check creator
             creator_ready = supabase_client.is_user_platform_ready(creator_id)
-            if not creator_ready.get("success") or not creator_ready.get("is_ready"):
+            if not creator_ready.get("success") or not creator_ready.get(
+                "is_ready"
+            ):
                 reason = creator_ready.get("reason", "unknown")
                 return {
                     "success": False,
-                    "error": "You must complete onboarding and verify your podcast claim before messaging other users"
+                    "error": "You must complete onboarding and verify your podcast claim before messaging other users",
                 }
 
             # Check recipient
-            recipient_ready = supabase_client.is_user_platform_ready(recipient_id)
-            if not recipient_ready.get("success") or not recipient_ready.get("is_ready"):
+            recipient_ready = supabase_client.is_user_platform_ready(
+                recipient_id
+            )
+            if not recipient_ready.get("success") or not recipient_ready.get(
+                "is_ready"
+            ):
                 reason = recipient_ready.get("reason", "unknown")
                 return {
                     "success": False,
-                    "error": "This user hasn't completed their profile setup yet and cannot receive messages"
+                    "error": "This user hasn't completed their profile setup yet and cannot receive messages",
                 }
 
             # Check if conversation already exists
-            existing = await self._find_direct_conversation(creator_id, recipient_id)
+            existing = await self._find_direct_conversation(
+                creator_id, recipient_id
+            )
             if existing:
                 # Remove unwanted fields from existing conversation
                 existing.pop("podcast_id", None)
@@ -359,20 +393,22 @@ class MessagesService:
                     "is_admin": False,  # No admins in direct messages
                 },
                 {
-                    'conversation_id': conversation_id,
-                    'user_id': recipient_id,
-                    'is_admin': False
-                }
+                    "conversation_id": conversation_id,
+                    "user_id": recipient_id,
+                    "is_admin": False,
+                },
             ]
 
             participants_result = (
                 self.supabase.table("conversation_participants")
                 .insert(participants_data)
                 .execute()
-
+            )
             if participants_result.data:
-                logger.info(f"Created direct conversation {conversation_id} between {creator_id} and {recipient_id}")
-                
+                logger.info(
+                    f"Created direct conversation {conversation_id} between {creator_id} and {recipient_id}"
+                )
+
                 # Remove unwanted fields before returning
                 conversation.pop("podcast_id", None)
                 conversation.pop("episode_id", None)
@@ -2281,4 +2317,3 @@ class MessagesService:
 
         except Exception as e:
             logger.error(f"Error updating user last read: {e}")
-
