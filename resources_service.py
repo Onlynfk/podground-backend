@@ -9,7 +9,7 @@ import logging
 import re
 import os
 
-from supabase_client import SupabaseClient
+from supabase_client import get_supabase_client
 from access_control import get_user_subscription_status
 from article_content_service import article_content_service
 from action_guide_service import action_guide_service
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 class ResourcesService:
     def __init__(self):
-        self.supabase_client = SupabaseClient()
+        self.supabase_client = get_supabase_client()
         self.supabase = self.supabase_client.service_client
 
         # Get bucket names from environment (required)

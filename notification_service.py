@@ -8,8 +8,9 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List
 from enum import Enum
 
-from supabase_client import SupabaseClient
+from supabase_client import get_supabase_client
 from user_profile_cache_service import get_user_profile_cache_service
+from datetime_utils import format_datetime_central
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +86,7 @@ class NotificationService:
     """Service for creating and managing notifications"""
 
     def __init__(self):
-        self.supabase_client = SupabaseClient()
+        self.supabase_client = get_supabase_client()
 
     async def create_notification(
         self,
@@ -188,7 +189,15 @@ class NotificationService:
 
             result = query.execute()
 
-            return result.data or []
+            # Format datetime fields to Central Time
+            notifications = result.data or []
+            for notification in notifications:
+                if 'created_at' in notification:
+                    notification['created_at'] = format_datetime_central(notification['created_at'])
+                if 'read_at' in notification:
+                    notification['read_at'] = format_datetime_central(notification['read_at'])
+
+            return notifications
 
         except Exception as e:
             logger.error(f"Failed to get notifications for user {user_id}: {str(e)}")

@@ -473,6 +473,14 @@ if "http://localhost:3002" not in allowed_origins:
 if "https://localhost:3002" not in allowed_origins:
     allowed_origins.append("https://localhost:3002")
 
+# Allow null origin for local file:// testing (development only)
+# WARNING: Remove this in production!
+environment = os.getenv("ENVIRONMENT", "dev")
+if environment in ["dev", "development"]:
+    if "null" not in allowed_origins:
+        allowed_origins.append("null")
+        logger.warning("CORS: Allowing 'null' origin for local file:// testing (development only)")
+
 # Allow Netlify deployments (for testing)
 # Note: We'll allow all Netlify domains since they change with each deployment
 # In production, you should specify exact domains
@@ -1129,10 +1137,11 @@ async def signup(signup_data: SignUpRequest, request: Request):
         )
 
     try:
-        # Redirect to frontend callback endpoint for code exchange
+        # Redirect to frontend callback page (admin.generate_link doesn't support PKCE)
+        # Frontend will extract token from hash and call backend
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-        redirect_url = f"{frontend_url}/redirect/auth/callback"
-
+        redirect_url = f"{frontend_url}/auth/callback"
+        
         # Step 1: Create user in Supabase without sending email
         result = supabase_client.create_user_without_email(
             signup_data.email, sanitized_name
@@ -1283,15 +1292,11 @@ async def verify_code_for_session(
                     status_code=400, detail="Invalid or expired verification code"
                 )
             else:
-                raise HTTPException(
-                    status_code=500, detail=f"Verification failed: {error_msg}"
-                )
+                raise HTTPException(status_code=500, detail=f"Verification failed: {error_msg}")
 
         user_id = result.get("user_id")
         if not user_id:
-            raise HTTPException(
-                status_code=500, detail="Failed to get user ID from verification"
-            )
+            raise HTTPException(status_code=500, detail="Failed to get user ID from verification")
 
         user_email = verify_data.email
         logger.info(f"Code verification successful for user {user_id}")
@@ -1332,35 +1337,27 @@ async def verify_code_for_session(
             # Mark signup as confirmed
             confirmation_result = supabase_client.mark_signup_confirmed(user_id)
             if confirmation_result["success"]:
-                logger.info(
-                    f"Marked signup confirmed via 6-digit code for user {user_id}"
-                )
+                logger.info(f"Marked signup confirmed via 6-digit code for user {user_id}")
 
-                # Add to confirmed signups segment in Customer.io
-                segment_name = os.getenv(
-                    "CUSTOMERIO_CONFIRMED_SIGNUPS_SEGMENT", "confirmed_signups"
-                )
-                segment_result = customerio_client.add_to_segment(
-                    email=user_email,
-                    segment_name=segment_name,
-                    user_data={"signup_confirmed_via": "six_digit_code"},
-                )
-                if segment_result["success"]:
-                    logger.info(
-                        f"Added {user_email} to confirmed_signups segment via 6-digit code"
+                # Add signup_confirmed attribute to Customer.io
+                try:
+                    customerio_result = customerio_client.update_user_attributes(
+                        user_id=user_id,
+                        email=user_email,
+                        attributes={"signup_confirmed": True}
                     )
-                else:
-                    logger.error(
-                        f"Failed to add to segment: {segment_result.get('error')}"
-                    )
+                    if customerio_result["success"]:
+                        logger.info(f"Customer.io: Added signup_confirmed attribute for {user_email}")
+                    else:
+                        logger.warning(f"Customer.io: Failed to add signup_confirmed: {customerio_result.get('error')}")
+                except Exception as e:
+                    logger.warning(f"Customer.io signup_confirmed tracking error (non-fatal): {str(e)}")
             else:
                 logger.warning(
                     f"Failed to mark signup confirmed: {confirmation_result.get('error')}"
                 )
         except Exception as e:
-            logger.warning(
-                f"Signup confirmation error (non-fatal): {str(e)}", exc_info=True
-            )
+            logger.warning(f"Signup confirmation error (non-fatal): {str(e)}", exc_info=True)
 
         # Mark first login
         try:
@@ -1371,6 +1368,29 @@ async def verify_code_for_session(
             logger.warning(
                 f"First login marking error (non-fatal): {str(e)}", exc_info=True
             )
+
+        # Invalidate episode cache for user's favorite podcasts on sign-in
+        try:
+            favorite_podcasts = await podcast_service.get_user_favorite_podcasts(user_id)
+            if favorite_podcasts:
+                invalidated_count = 0
+                for podcast in favorite_podcasts:
+                    podcast_id = podcast.get('id')
+                    if podcast_id:
+                        podcast_service.episode_cache.invalidate_podcast(podcast_id)
+                        invalidated_count += 1
+                logger.info(f"Invalidated episode cache for {invalidated_count} favorite podcasts on user sign-in: {user_id}")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate episode cache on sign-in (non-fatal): {str(e)}", exc_info=True)
+
+        # Invalidate user profile cache on sign-in to fetch fresh data
+        try:
+            from user_profile_cache_service import get_user_profile_cache_service
+            profile_cache = get_user_profile_cache_service()
+            profile_cache.invalidate(user_id)
+            logger.info(f"Invalidated user profile cache on sign-in: {user_id}")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate profile cache on sign-in (non-fatal): {str(e)}", exc_info=True)
 
         # Create 90-day refresh token for persistent login
         try:
@@ -1492,13 +1512,14 @@ async def signin(signin_data: SignInRequest, request: Request):
             first_name = user.user_metadata.get("first_name", "")
             last_name = user.user_metadata.get("last_name", "")
             user_name = f"{first_name} {last_name}".strip()
-
-        if not user_name and hasattr(user, "email"):
-            user_name = user.email.split("@")[0]  # Fallback to email username
-
-        # Get URLs for redirect - use frontend callback for code exchange
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-        redirect_url = f"{frontend_url}/redirect/auth/callback"
+        
+        if not user_name and hasattr(user, 'email'):
+            user_name = user.email.split('@')[0]  # Fallback to email username
+        
+        # Get URLs for redirect - use frontend callback (admin.generate_link doesn't support PKCE)
+        # Frontend will extract token from hash and call backend
+        frontend_url = os.getenv("FRONTEND_URL")
+        redirect_url = f"{frontend_url}/auth/callback"
 
         # Generate magic link
         magic_link_result = supabase_client.generate_magic_link(
@@ -1573,13 +1594,14 @@ async def resend_auth_credentials(
             first_name = user.user_metadata.get("first_name", "")
             last_name = user.user_metadata.get("last_name", "")
             user_name = f"{first_name} {last_name}".strip()
-
-        if not user_name and hasattr(user, "email"):
-            user_name = user.email.split("@")[0]  # Fallback to email username
-
-        # Get URLs for redirect - use frontend callback for code exchange
+        
+        if not user_name and hasattr(user, 'email'):
+            user_name = user.email.split('@')[0]  # Fallback to email username
+        
+        # Get URLs for redirect - use frontend callback (admin.generate_link doesn't support PKCE)
+        # Frontend will extract token from hash and call backend
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-        redirect_url = f"{frontend_url}/redirect/auth/callback"
+        redirect_url = f"{frontend_url}/auth/callback"
 
         # Generate new magic link (this invalidates the previous one by creating a new one)
         magic_link_result = supabase_client.generate_magic_link(
@@ -1602,24 +1624,25 @@ async def resend_auth_credentials(
         # Check if user has already confirmed their signup
         signup_status = supabase_client.check_user_signup_confirmed(user_id)
 
+        # Generate verification code for both cases
+        short_code = supabase_client.generate_short_verification_code(user_id, length=6)
+
         if signup_status.get("is_confirmed", False):
-            # User already confirmed - send login reminder (magic link only)
+            # User already confirmed - send login reminder (magic link + verification code)
             customerio_result = customerio_client.send_signup_reminder_transactional(
-                email=resend_data.email, name=user_name, magic_link_url=magic_link_url
+                email=resend_data.email,
+                name=user_name,
+                magic_link_url=magic_link_url,
+                verification_code=short_code
             )
-            message_text = f"We just sent a new login link to {resend_data.email}"
+            message_text = f"We just sent a new login link and verification code to {resend_data.email}"
         else:
             # User not confirmed yet - send full signup confirmation with verification code
-            short_code = supabase_client.generate_short_verification_code(
-                user_id, length=6
-            )
-            customerio_result = (
-                customerio_client.send_signup_confirmation_transactional(
-                    email=resend_data.email,
-                    name=user_name,
-                    magic_link_url=magic_link_url,
-                    verification_code=short_code,
-                )
+            customerio_result = customerio_client.send_signup_confirmation_transactional(
+                email=resend_data.email,
+                name=user_name,
+                magic_link_url=magic_link_url,
+                verification_code=short_code
             )
             message_text = f"We just sent a new login url and verification code to {resend_data.email}"
 
@@ -1732,27 +1755,21 @@ async def exchange_code_for_session(
             # Now mark signup as confirmed
             confirmation_result = supabase_client.mark_signup_confirmed(user_id)
             if confirmation_result["success"]:
-                logger.info(
-                    f"Marked signup confirmed via JWT token exchange for user {user_id}"
-                )
+                logger.info(f"Marked signup confirmed via JWT token exchange for user {user_id}")
 
-                # Add to confirmed signups segment in Customer.io
-                segment_name = os.getenv(
-                    "CUSTOMERIO_CONFIRMED_SIGNUPS_SEGMENT", "confirmed_signups"
-                )
-                segment_result = customerio_client.add_to_segment(
-                    email=user_email,
-                    segment_name=segment_name,
-                    user_data={"signup_confirmed_via": "jwt_token_exchange"},
-                )
-                if segment_result["success"]:
-                    logger.info(
-                        f"Added {user_email} to confirmed_signups segment via JWT token"
+                # Add signup_confirmed attribute to Customer.io
+                try:
+                    customerio_result = customerio_client.update_user_attributes(
+                        user_id=user_id,
+                        email=user_email,
+                        attributes={"signup_confirmed": True}
                     )
-                else:
-                    logger.error(
-                        f"Failed to add to segment: {segment_result.get('error')}"
-                    )
+                    if customerio_result["success"]:
+                        logger.info(f"Customer.io: Added signup_confirmed attribute for {user_email}")
+                    else:
+                        logger.warning(f"Customer.io: Failed to add signup_confirmed: {customerio_result.get('error')}")
+                except Exception as e:
+                    logger.warning(f"Customer.io signup_confirmed tracking error (non-fatal): {str(e)}")
             else:
                 logger.warning(
                     f"Failed to mark signup confirmed: {confirmation_result.get('error')}"
@@ -1946,6 +1963,198 @@ async def refresh_user_session(
     except Exception as e:
         logger.error(f"Session refresh error: {str(e)}")
         return RefreshSessionResponse(ok=False, error="Internal server error")
+
+
+@app.post("/api/v1/auth/callback", tags=["Authentication"])
+async def auth_callback(request: Request, response: Response, db: Session = Depends(get_db)):
+    """Handle magic link callback - exchange access token for session"""
+
+    try:
+        # Get access token and refresh token from request body
+        body = await request.json()
+        access_token = body.get("access_token")
+        refresh_token_from_hash = body.get("refresh_token")
+
+        if not access_token:
+            logger.warning("Auth callback missing access_token")
+            return {"success": False, "error": "Missing access_token"}
+
+        logger.info(f"Auth callback received access_token: {access_token[:20]}...")
+
+        # Validate the JWT access token and get user info
+        # The exchange_code_for_session method already handles JWT tokens
+        result = supabase_client.exchange_code_for_session(access_token)
+
+        if not result["success"]:
+            logger.warning(f"Token validation failed in callback: {result.get('error')}")
+            return {"success": False, "error": "Token validation failed"}
+
+        user = result["user"]
+        user_id = user.id
+        user_email = user.email
+
+        logger.info(f"Auth callback successful for user {user_id}")
+
+        # Create server session
+        request.session["user_id"] = user_id
+        request.session["user_email"] = user_email
+        request.session["authenticated"] = True
+
+        # Mark first login and signup confirmation (same as verify-code endpoint)
+        try:
+            # Create/update signup tracking
+            existing_tracking = supabase_client.get_signup_tracking_by_user_id(user_id)
+
+            if not existing_tracking["success"] or not existing_tracking.get("data"):
+                user_name = f"{user.user_metadata.get('first_name', '')} {user.user_metadata.get('last_name', '')}".strip()
+                if not user_name:
+                    user_name = user_email.split('@')[0]
+
+                tracking_result = supabase_client.create_signup_tracking(
+                    user_id=user_id,
+                    email=user_email,
+                    name=user_name
+                )
+                if tracking_result["success"]:
+                    logger.info(f"Created signup tracking for user {user_id}")
+
+            # Mark signup confirmed
+            confirmation_result = supabase_client.mark_signup_confirmed(user_id)
+            if confirmation_result.get("success"):
+                logger.info(f"Marked signup confirmed via auth callback for user {user_id}")
+
+                # Add signup_confirmed attribute to Customer.io
+                try:
+                    customerio_result = customerio_client.update_user_attributes(
+                        user_id=user_id,
+                        email=user_email,
+                        attributes={"signup_confirmed": True}
+                    )
+                    if customerio_result["success"]:
+                        logger.info(f"Customer.io: Added signup_confirmed attribute for {user_email}")
+                    else:
+                        logger.warning(f"Customer.io: Failed to add signup_confirmed: {customerio_result.get('error')}")
+                except Exception as e:
+                    logger.warning(f"Customer.io signup_confirmed tracking error (non-fatal): {str(e)}")
+
+            # Mark first login
+            supabase_client.mark_first_login(user_id)
+        except Exception as e:
+            logger.warning(f"Signup tracking error (non-fatal): {str(e)}")
+
+        # Invalidate caches (same as verify-code endpoint)
+        try:
+            favorite_podcasts = await podcast_service.get_user_favorite_podcasts(user_id)
+            if favorite_podcasts:
+                for podcast in favorite_podcasts:
+                    podcast_id = podcast.get('id')
+                    if podcast_id:
+                        podcast_service.episode_cache.invalidate_podcast(podcast_id)
+        except Exception as e:
+            logger.warning(f"Failed to invalidate episode cache (non-fatal): {str(e)}")
+
+        try:
+            from user_profile_cache_service import get_user_profile_cache_service
+            profile_cache = get_user_profile_cache_service()
+            profile_cache.invalidate(user_id)
+        except Exception as e:
+            logger.warning(f"Failed to invalidate profile cache (non-fatal): {str(e)}")
+
+        # Create refresh token
+        try:
+            user_agent = request.headers.get("User-Agent")
+            ip_address = request.client.host if request.client else None
+
+            refresh_token = RefreshTokenManager.create_refresh_token(
+                db=db,
+                user_id=user_id,
+                user_agent=user_agent,
+                ip_address=ip_address,
+                days_valid=90
+            )
+
+            # Set refresh token cookie with appropriate security settings
+            refresh_token_max_age = 90 * 24 * 60 * 60
+
+            # Determine cookie security settings based on origin
+            origin = request.headers.get("origin")
+            is_localhost_request = origin and (
+                origin.startswith("http://localhost") or
+                origin.startswith("http://127.0.0.1")
+            )
+
+            if is_localhost_request:
+                cookie_secure = False  # Cannot use Secure on HTTP
+                cookie_samesite = "lax"  # Lax works for same-site localhost
+            else:
+                cookie_secure = True  # Always secure for production
+                cookie_samesite = "none"  # Required for cross-origin
+
+            response.set_cookie(
+                key="refresh_token",
+                value=refresh_token,
+                max_age=refresh_token_max_age,
+                httponly=True,
+                secure=cookie_secure,
+                samesite=cookie_samesite,
+                domain=None
+            )
+            logger.info(f"Set refresh token cookie for user {user_id} (secure={cookie_secure}, samesite={cookie_samesite})")
+        except Exception as e:
+            logger.warning(f"Failed to create refresh token (non-fatal): {str(e)}")
+
+        # Determine redirect path based on user status
+        redirect_path = "/claim-podcast"  # Default safe fallback
+
+        try:
+            # Get user status to determine correct redirect
+            # 1. Get onboarding status
+            onboarding_result = supabase_client.get_onboarding_data(user_id)
+            onboarding_completed = False
+
+            if onboarding_result["success"] and onboarding_result["data"]:
+                onboarding_data = onboarding_result["data"][0] if onboarding_result["data"] else {}
+                onboarding_completed = onboarding_data.get("is_completed", False)
+
+            # 2. Get podcast claim status
+            podcast_claims_result = supabase_client.get_user_podcast_claims_session(user_id)
+            podcast_claimed = False
+
+            if podcast_claims_result["success"] and podcast_claims_result["data"]:
+                claims = podcast_claims_result["data"]
+                for claim in claims:
+                    if claim.get("is_verified", False):
+                        podcast_claimed = True
+                        break
+
+            # 3. Apply redirect logic
+            if not podcast_claimed and not onboarding_completed:
+                redirect_path = "/claim-podcast"
+                logger.info(f"User {user_id} → /claim-podcast (no claim, no onboarding)")
+            elif podcast_claimed and not onboarding_completed:
+                redirect_path = "/onboarding"
+                logger.info(f"User {user_id} → /onboarding (claimed, needs onboarding)")
+            elif podcast_claimed and onboarding_completed:
+                redirect_path = "/home/my-feed"
+                logger.info(f"User {user_id} → /home/my-feed (claimed and onboarded)")
+            else:
+                # Edge case: no claim but onboarding complete - still send to claim
+                redirect_path = "/claim-podcast"
+                logger.info(f"User {user_id} → /claim-podcast (edge case: onboarded but no claim)")
+
+        except Exception as e:
+            logger.warning(f"Failed to determine user status (defaulting to claim-podcast): {str(e)}")
+            redirect_path = "/claim-podcast"
+
+        return {
+            "success": True,
+            "redirect_path": redirect_path,
+            "user_id": user_id
+        }
+
+    except Exception as e:
+        logger.error(f"Auth callback error: {str(e)}")
+        return {"success": False, "error": "Authentication failed"}
 
 
 @app.get("/api/v1/auth/check", tags=["Authentication"])
@@ -2529,27 +2738,22 @@ async def verify_podcast_claim_by_code(
                 except Exception as e:
                     logger.warning(f"Onboarding update error (non-fatal): {str(e)}")
 
-            # Add user to verified podcast claimers segment
-            if user_email:
-                segment_name = os.getenv(
-                    "CUSTOMERIO_VERIFIED_PODCAST_CLAIMERS_SEGMENT",
-                    "verified_podcast_claimers",
-                )
-                segment_result = customerio_client.add_to_segment(
-                    email=user_email,
-                    segment_name=segment_name,
-                    user_data={"claimed_podcast": podcast_title},
-                )
-                if segment_result["success"]:
-                    logger.info(
-                        f"Added {user_email} to verified_podcast_claimers segment"
+                # Add verified_podcast attribute to Customer.io
+                try:
+                    customerio_result = customerio_client.update_user_attributes(
+                        user_id=user_id,
+                        email=user_email,
+                        attributes={"verified_podcast": True}
                     )
-                else:
-                    logger.error(
-                        f"Failed to add to verified segment: {segment_result.get('error')}"
-                    )
+                    if customerio_result["success"]:
+                        logger.info(f"Customer.io: Added verified_podcast attribute for {user_email}")
+                    else:
+                        logger.warning(f"Customer.io: Failed to add verified_podcast: {customerio_result.get('error')}")
+                except Exception as e:
+                    logger.warning(f"Customer.io verified_podcast tracking error (non-fatal): {str(e)}")
 
-                # Send success notification
+            # Send success notification
+            if user_email:
                 user_name = get_user_display_name(user_id, user_email)
                 success_email = (
                     customerio_client.send_podcast_claim_success_transactional(
@@ -2615,7 +2819,7 @@ async def save_onboarding_profile(
         )
 
     # Validate podcasting experience value
-    valid_experiences = ["0-1_year", "1-3_years", "5_years_plus"]
+    valid_experiences = ["0-1_year", "1-3_years", "3_years_plus"]
     if onboarding_data.podcasting_experience not in valid_experiences:
         raise HTTPException(
             status_code=400,
@@ -3011,7 +3215,7 @@ async def save_onboarding_step(
                 )
 
         # Validate podcasting experience value
-        valid_experiences = ["0-1_year", "1-3_years", "5_years_plus"]
+        valid_experiences = ["0-1_year", "1-3_years", "3_years_plus"]
         if step_data.data.get("podcasting_experience") not in valid_experiences:
             raise HTTPException(
                 status_code=400,
@@ -3054,45 +3258,66 @@ async def save_onboarding_step(
                 status_code=400, detail="favorite_podcast_ids is required for step 5"
             )
         if not isinstance(step_data.data.get("favorite_podcast_ids"), list):
-            raise HTTPException(
-                status_code=400, detail="favorite_podcast_ids must be an array"
-            )
-
-        # Fetch podcast metadata for denormalization
-        favorite_ids = step_data.data.get("favorite_podcast_ids", [])
-        if favorite_ids:
-            # Fetch metadata for each podcast and update in background
-            for podcast_id in favorite_ids[:5]:  # Only first 5
-                try:
-                    # Try to get podcast info from ListenNotes
-                    podcast_info = listennotes_client.get_podcast_by_id(podcast_id)
-                    if podcast_info.get("success") and podcast_info.get("data"):
-                        data = podcast_info["data"]
-                        # Update metadata in the mapping table
-                        supabase_client.update_favorite_podcast_metadata(
-                            podcast_id=podcast_id,
-                            title=data.get("title", ""),
-                            image=data.get("image", ""),
-                            publisher=data.get("publisher", ""),
-                        )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to fetch metadata for podcast {podcast_id}: {str(e)}"
-                    )
-                    # Continue with other podcasts even if one fails
-
+            raise HTTPException(status_code=400, detail="favorite_podcast_ids must be an array")
+        
+        # Note: Podcast metadata is fetched dynamically from podcasts table via JOINs
+        # No need for denormalization as user_favorite_podcasts table is deprecated
+    
     try:
         # Pass automatic favorites only for step 5
         auto_favorites = AUTOMATIC_FAVORITE_PODCASTS if step_data.step == 5 else None
-        result = supabase_client.save_onboarding_step(
-            user_id,
-            step_data.step,
-            step_data.data,
-            user_token=None,
-            automatic_favorites=auto_favorites,
-        )
+        result = supabase_client.save_onboarding_step(user_id, step_data.step, step_data.data, user_token=None, automatic_favorites=auto_favorites)
 
         if result["success"]:
+            # Track onboarding progress in Customer.io
+            try:
+                # Get user email for Customer.io
+                user_data = supabase_client.service_client.auth.admin.get_user_by_id(user_id)
+                user_email = user_data.user.email if user_data and user_data.user else None
+
+                if user_email:
+                    environment = os.getenv("ENVIRONMENT", "dev")
+
+                    # Step 1: Mark onboarding as started
+                    if step_data.step == 1:
+                        customerio_result = customerio_client.update_user_attributes(
+                            user_id=user_id,
+                            email=user_email,
+                            attributes={
+                                "onboarding": "started",
+                                "onboarding_environment": environment
+                            }
+                        )
+                        if customerio_result["success"]:
+                            logger.info(f"Customer.io: Marked onboarding as started for {user_email}")
+                        else:
+                            logger.warning(f"Customer.io: Failed to mark onboarding started: {customerio_result.get('error')}")
+
+                    # Step 5: Mark onboarding as completed
+                    elif step_data.step == 5:
+                        customerio_result = customerio_client.update_user_attributes(
+                            user_id=user_id,
+                            email=user_email,
+                            attributes={
+                                "onboarding": "completed"
+                            }
+                        )
+                        if customerio_result["success"]:
+                            logger.info(f"Customer.io: Marked onboarding as completed for {user_email}")
+                        else:
+                            logger.warning(f"Customer.io: Failed to mark onboarding completed: {customerio_result.get('error')}")
+            except Exception as e:
+                # Don't fail the request if Customer.io tracking fails
+                logger.warning(f"Customer.io onboarding tracking error (non-fatal): {str(e)}")
+
+            # Invalidate episode cache for auto-favorite podcasts on step 5 completion
+            if step_data.step == 5 and auto_favorites:
+                for podcast in auto_favorites:
+                    podcast_id = podcast.get("podcast_id")
+                    if podcast_id:
+                        podcast_service.episode_cache.invalidate_podcast(podcast_id)
+                        logger.info(f"Invalidated episode cache for auto-favorite podcast {podcast_id} on user signup completion")
+
             step_name = {
                 1: "podcasting experience",
                 2: "categories and network info",
@@ -3845,10 +4070,12 @@ async def get_user_posts(
     """Get public posts from a specific user"""
 
     try:
-        result = supabase_client.posts.get_user_posts(
-            user_id, target_user_id, limit, cursor
-        )
+        # Resolve "me" to actual user ID
+        if target_user_id == "me":
+            target_user_id = user_id
 
+        result = supabase_client.posts.get_user_posts(user_id, target_user_id, limit, cursor)
+        
         if result["success"]:
             return FeedResponse(**result["data"])
         else:
@@ -3877,8 +4104,19 @@ async def send_connection_request(
                 user_id, connection_data.user_id
             )
 
-            # Send notification for new connection request
+            # Invalidate profile cache for both users and send notification
             if result["success"]:
+                # Invalidate profile cache
+                try:
+                    from user_profile_cache_service import get_user_profile_cache_service
+                    profile_cache = get_user_profile_cache_service()
+                    profile_cache.invalidate(user_id)
+                    profile_cache.invalidate(connection_data.user_id)
+                    logger.info(f"Invalidated profile cache for users {user_id} and {connection_data.user_id} after connection request")
+                except Exception as e:
+                    logger.warning(f"Failed to invalidate profile cache after connection request (non-fatal): {e}")
+
+                # Send notification
                 try:
                     user_profile_service = UserProfileService()
                     requester_profile = await user_profile_service.get_user_profile(
@@ -3914,8 +4152,19 @@ async def send_connection_request(
                     connection_result.data["id"], user_id
                 )
 
-                # Send notification for accepted connection
+                # Invalidate profile cache for both users and send notification
                 if result["success"]:
+                    # Invalidate profile cache
+                    try:
+                        from user_profile_cache_service import get_user_profile_cache_service
+                        profile_cache = get_user_profile_cache_service()
+                        profile_cache.invalidate(user_id)
+                        profile_cache.invalidate(connection_data.user_id)
+                        logger.info(f"Invalidated profile cache for users {user_id} and {connection_data.user_id} after connection accepted")
+                    except Exception as e:
+                        logger.warning(f"Failed to invalidate profile cache after connection accept (non-fatal): {e}")
+
+                    # Send notification
                     try:
                         user_profile_service = UserProfileService()
                         accepter_profile = await user_profile_service.get_user_profile(
@@ -5464,6 +5713,10 @@ async def get_podcast_details(podcast_id: str, request: Request):
     """Get detailed podcast information"""
     user_id = get_current_user_id(request)
     try:
+        # Invalidate episode cache for this podcast to fetch fresh data
+        podcast_service.episode_cache.invalidate_podcast(podcast_id)
+        logger.info(f"Invalidated episode cache for podcast {podcast_id} on user view")
+
         podcast = await podcast_service.get_podcast_details(podcast_id, user_id)
         if not podcast:
             raise HTTPException(status_code=404, detail="Podcast not found")
@@ -5782,12 +6035,14 @@ async def follow_podcast(
     """Follow a podcast"""
     try:
         user_id = get_current_user_id(request)
-        result = await user_listening_service.follow_podcast(
-            user_id, podcast_id, notification_enabled
-        )
+        result = await user_listening_service.follow_podcast(user_id, podcast_id, notification_enabled)
 
         if not result["success"]:
             raise HTTPException(status_code=400, detail=result["message"])
+
+        # Invalidate episode cache for this podcast to fetch fresh episodes
+        podcast_service.episode_cache.invalidate_podcast(podcast_id)
+        logger.info(f"Invalidated episode cache for podcast {podcast_id} on user follow")
 
         return result
     except HTTPException:
@@ -6846,6 +7101,13 @@ async def search_messages(
 async def get_user_profile(user_id: str, request: Request):
     """Get complete user profile with interests, location, bio, and connection status"""
     try:
+        # Resolve "me" to actual user ID
+        if user_id == "me":
+            try:
+                user_id = get_current_user_id(request)
+            except HTTPException:
+                raise HTTPException(status_code=401, detail="Authentication required to access your own profile")
+
         # Check privacy settings - get requesting user ID
         requesting_user_id = None
         try:
@@ -6964,6 +7226,13 @@ async def get_user_avatar(user_id: str, request: Request):
     If the user has no avatar, returns null for avatar_url.
     """
     try:
+        # Resolve "me" to actual user ID
+        if user_id == "me":
+            try:
+                user_id = get_current_user_id(request)
+            except HTTPException:
+                raise HTTPException(status_code=401, detail="Authentication required to access your own avatar")
+
         profile_service = UserProfileService()
         result = await profile_service.get_user_avatar(user_id)
 
@@ -7140,8 +7409,18 @@ async def send_connection_request(request: Request, user_id: str):
             requester_id, user_id
         )
 
-        # Send notification for new connection request
+        # Invalidate profile cache for both users after connection request
         if result.get("success"):
+            try:
+                from user_profile_cache_service import get_user_profile_cache_service
+                profile_cache = get_user_profile_cache_service()
+                profile_cache.invalidate(requester_id)
+                profile_cache.invalidate(user_id)
+                logger.info(f"Invalidated profile cache for users {requester_id} and {user_id} after connection request")
+            except Exception as e:
+                logger.warning(f"Failed to invalidate profile cache after connection request (non-fatal): {e}")
+
+            # Send notification for new connection request
             try:
                 user_profile_service = UserProfileService()
                 requester_profile = await user_profile_service.get_user_profile(
@@ -7177,7 +7456,7 @@ async def accept_connection_request(request: Request, request_id: str):
             user_id, request_id
         )
 
-        # Send notification for accepted connection
+        # Invalidate profile cache for both users and send notification
         if result.get("success"):
             try:
                 # Get the connection to find the requester
@@ -7191,6 +7470,16 @@ async def accept_connection_request(request: Request, request_id: str):
 
                 if connection_result.data:
                     requester_id = connection_result.data["follower_id"]
+
+                    # Invalidate profile cache for both users
+                    try:
+                        from user_profile_cache_service import get_user_profile_cache_service
+                        profile_cache = get_user_profile_cache_service()
+                        profile_cache.invalidate(requester_id)
+                        profile_cache.invalidate(user_id)
+                        logger.info(f"Invalidated profile cache for users {requester_id} and {user_id} after connection accepted")
+                    except Exception as e:
+                        logger.warning(f"Failed to invalidate profile cache after connection accept (non-fatal): {e}")
 
                     user_profile_service = UserProfileService()
                     accepter_profile = await user_profile_service.get_user_profile(
@@ -7225,6 +7514,25 @@ async def decline_connection_request(request: Request, request_id: str):
         result = await connections_service.decline_connection_request(
             user_id, request_id
         )
+
+        # Invalidate profile cache for both users after connection declined
+        if result.get("success"):
+            try:
+                # Get the connection to find the requester
+                connection_result = supabase_client.service_client.table("user_connections").select(
+                    "follower_id"
+                ).eq("id", request_id).single().execute()
+
+                if connection_result.data:
+                    requester_id = connection_result.data["follower_id"]
+
+                    from user_profile_cache_service import get_user_profile_cache_service
+                    profile_cache = get_user_profile_cache_service()
+                    profile_cache.invalidate(requester_id)
+                    profile_cache.invalidate(user_id)
+                    logger.info(f"Invalidated profile cache for users {requester_id} and {user_id} after connection declined")
+            except Exception as e:
+                logger.warning(f"Failed to invalidate profile cache after connection decline (non-fatal): {e}")
 
         return result
     except HTTPException:

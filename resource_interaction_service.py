@@ -8,14 +8,14 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 import uuid
 
-from supabase_client import SupabaseClient
+from supabase_client import get_supabase_client
 
 logger = logging.getLogger(__name__)
 
 
 class ResourceInteractionService:
     def __init__(self):
-        self.supabase_client = SupabaseClient()
+        self.supabase_client = get_supabase_client()
 
     async def track_interaction(
         self,

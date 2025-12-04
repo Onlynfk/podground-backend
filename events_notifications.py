@@ -9,16 +9,16 @@ from datetime import datetime, timedelta, timezone
 import logging
 
 from customerio_client import CustomerIOClient
-from supabase_client import SupabaseClient
+from supabase_client import get_supabase_client
 
 logger = logging.getLogger(__name__)
 
 class EventsNotificationService:
     """Service for managing event-related email notifications"""
-    
+
     def __init__(self):
         self.customerio = CustomerIOClient()
-        self.supabase_client = SupabaseClient()
+        self.supabase_client = get_supabase_client()
         self.supabase = self.supabase_client.service_client
     
     async def send_registration_confirmation(self, user_id: str, event_id: str, attendee_id: str) -> Dict:

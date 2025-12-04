@@ -5,7 +5,7 @@ import logging
 from typing import Optional, Dict, List
 from functools import wraps
 from fastapi import HTTPException, Depends
-from supabase_client import SupabaseClient
+from supabase_client import SupabaseClient, get_supabase_client
 
 logger = logging.getLogger(__name__)
 
@@ -223,7 +223,7 @@ async def get_user_subscription_status(user_id: str) -> Dict:
     try:
         # Create a temporary AccessControl instance if global one isn't available
         if access_control is None:
-            supabase_client = SupabaseClient()
+            supabase_client = get_supabase_client()
             ac = AccessControl(supabase_client)
         else:
             ac = access_control

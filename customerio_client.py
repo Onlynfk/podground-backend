@@ -10,25 +10,30 @@ logger = logging.getLogger(__name__)
 
 class CustomerIOClient:
     def __init__(self):
-        self.api_key = os.getenv("CUSTOMERIO_API_KEY")
+        # Pipelines API Key (for CDP - waitlist/contact management)
+        self.pipelines_api_key = os.getenv("CUSTOMERIO_API_KEY")
+
+        # App API Key (for Transactional emails)
+        self.app_api_key = os.getenv("CUSTOMERIO_APP_API_KEY")
+
         self.base_url = os.getenv("CUSTOMERIO_BASE_URL")
         self.region = os.getenv("CUSTOMERIO_REGION", "US")
-        
+
         # Set base URL - prioritize env var, fallback to region-based URL
         if not self.base_url:
             if self.region.upper() == "EU":
                 self.base_url = "https://cdp-eu.customer.io/v1"
             else:
                 self.base_url = "https://cdp.customer.io/v1"
-        
+
         # Transactional API URL (App API Key endpoints)
         if self.region.upper() == "EU":
             self.transactional_url = "https://api-eu.customer.io/v1"
         else:
             self.transactional_url = "https://api.customer.io/v1"
-        
+
         # Check if credentials are configured
-        self.client = bool(self.api_key and self.base_url)
+        self.client = bool(self.pipelines_api_key and self.base_url)
     
     def get_current_segment_id(self) -> str:
         """Get the appropriate segment ID based on current environment"""
@@ -41,24 +46,25 @@ class CustomerIOClient:
         
         return segment_id
     
-    def add_microgrant_contact(self, email: str, first_name: str = "", last_name: str = "") -> Dict[str, Any]:
+    def add_microgrant_contact(self, email: str, first_name: str = "", last_name: str = "", user_id: str = None) -> Dict[str, Any]:
         """Add a microgrant contact to Customer.io using Pipelines API"""
         if not self.client:
             return {"success": False, "error": "Customer.io API credentials not configured"}
-        
+
         try:
-            # Generate auto-generated userId (GUID without dashes)
-            user_id = str(uuid.uuid4()).replace('-', '')
+            # Use provided user_id or fall back to email as stable identifier
+            if not user_id:
+                user_id = email
             
-            # Create basic auth (API key as username, no password)
-            auth_string = f"{self.api_key}:"
+            # Create basic auth (Pipelines API key as username, no password)
+            auth_string = f"{self.pipelines_api_key}:"
             encoded_auth = base64.b64encode(auth_string.encode()).decode()
-            
+
             headers = {
                 "Authorization": f"Basic {encoded_auth}",
                 "Content-Type": "application/json"
             }
-            
+
             # Build name field - combine first and last name
             name = ""
             if first_name and last_name:
@@ -67,10 +73,10 @@ class CustomerIOClient:
                 name = first_name
             elif last_name:
                 name = last_name
-            
+
             # Get current environment
             environment = os.getenv("ENVIRONMENT", "dev")
-            
+
             # Step 1: Identify the user with correct format
             identify_payload = {
                 "userId": user_id,
@@ -139,24 +145,25 @@ class CustomerIOClient:
             logger.error(f"Customer.io Pipelines microgrant error: {type(e).__name__}: {str(e)}", exc_info=True)
             return {"success": False, "error": f"Customer.io error: {str(e)}"}
     
-    def add_contact(self, email: str, first_name: str = "", last_name: str = "", variant: str = "A") -> Dict[str, Any]:
+    def add_contact(self, email: str, first_name: str = "", last_name: str = "", variant: str = "A", user_id: str = None) -> Dict[str, Any]:
         """Add a contact to Customer.io using Pipelines API with correct format"""
         if not self.client:
             return {"success": False, "error": "Customer.io API credentials not configured"}
-        
+
         try:
-            # Generate auto-generated userId (GUID without dashes)
-            user_id = str(uuid.uuid4()).replace('-', '')
-            
-            # Create basic auth (API key as username, no password)
-            auth_string = f"{self.api_key}:"
+            # Use provided user_id or fall back to email as stable identifier
+            if not user_id:
+                user_id = email
+
+            # Create basic auth (Pipelines API key as username, no password)
+            auth_string = f"{self.pipelines_api_key}:"
             encoded_auth = base64.b64encode(auth_string.encode()).decode()
-            
+
             headers = {
                 "Authorization": f"Basic {encoded_auth}",
                 "Content-Type": "application/json"
             }
-            
+
             # Build name field - combine first and last name
             name = ""
             if first_name and last_name:
@@ -165,26 +172,28 @@ class CustomerIOClient:
                 name = first_name
             elif last_name:
                 name = last_name
-            
+
             # Get current environment
             environment = os.getenv("ENVIRONMENT", "dev")
-            
+
             # Step 1: Identify the user with correct format
             identify_payload = {
                 "userId": user_id,
                 "traits": {
+                    "name": name,
                     "email": email,
                     "variant": variant,
                     "waitlist_signup": environment
                 }
             }
-            
+
             # Add name if provided
             if name:
                 identify_payload["traits"]["name"] = name
-            
+
             logger.info(f"Customer.io Pipelines: Identifying user {user_id} ({email}) with traits: {identify_payload['traits']}")
-            
+            logger.info(f"Customer.io: Using base_url={self.base_url}, Pipelines API key={'***' + self.pipelines_api_key[-4:] if self.pipelines_api_key and len(self.pipelines_api_key) > 4 else 'NOT SET'}")
+
             # Send identify request
             identify_response = requests.post(
                 f"{self.base_url}/identify",
@@ -192,7 +201,8 @@ class CustomerIOClient:
                 headers=headers,
                 timeout=10
             )
-            
+
+            logger.info(f"Customer.io identify response: {identify_response.status_code}")
             if not identify_response.ok:
                 logger.error(f"Customer.io identify failed: {identify_response.status_code} - {identify_response.text}")
                 return {"success": False, "error": f"Failed to identify user: {identify_response.status_code}"}
@@ -218,7 +228,8 @@ class CustomerIOClient:
                 headers=headers,
                 timeout=10
             )
-            
+
+            logger.info(f"Customer.io track response: {track_response.status_code}")
             if not track_response.ok:
                 logger.error(f"Customer.io track failed: {track_response.status_code} - {track_response.text}")
                 return {"success": False, "error": f"Failed to track event: {track_response.status_code}"}
@@ -240,25 +251,72 @@ class CustomerIOClient:
             return {"success": False, "error": f"Customer.io error: {str(e)}"}
     
 
-    def mark_signup_confirmed(self, email: str, name: str = "") -> Dict[str, Any]:
-        """Mark signup as confirmed in Customer.io by updating user attributes"""
+    def update_user_attributes(self, user_id: str, email: str, attributes: Dict[str, Any]) -> Dict[str, Any]:
+        """Update user attributes in Customer.io using Pipelines API"""
         if not self.client:
             return {"success": False, "error": "Customer.io API credentials not configured"}
-        
+
         try:
-            # Generate user ID for this email (could be improved by using actual user ID)
-            user_id = str(uuid.uuid4()).replace('-', '')
-            environment = os.getenv("ENVIRONMENT", "dev").lower()
-            
-            # Create basic auth (API key as username, no password)
-            auth_string = f"{self.api_key}:"
+            # Create basic auth (Pipelines API key as username, no password)
+            auth_string = f"{self.pipelines_api_key}:"
             encoded_auth = base64.b64encode(auth_string.encode()).decode()
-            
+
             headers = {
                 "Authorization": f"Basic {encoded_auth}",
                 "Content-Type": "application/json"
             }
-            
+
+            # Update user attributes
+            identify_payload = {
+                "userId": user_id,
+                "traits": {
+                    "email": email,
+                    **attributes
+                }
+            }
+
+            logger.info(f"Customer.io: Updating attributes for {email} with: {attributes}")
+
+            # Send identify request to update user attributes
+            identify_response = requests.post(
+                f"{self.base_url}/identify",
+                json=identify_payload,
+                headers=headers,
+                timeout=10
+            )
+
+            if not identify_response.ok:
+                logger.error(f"Customer.io attribute update failed: {identify_response.status_code} - {identify_response.text}")
+                return {"success": False, "error": f"Failed to update attributes: {identify_response.status_code}"}
+
+            logger.info(f"Customer.io: Successfully updated attributes for {email}")
+
+            return {
+                "success": True,
+                "message": f"Attributes updated for {email}"
+            }
+
+        except Exception as e:
+            logger.error(f"Customer.io attribute update error: {type(e).__name__}: {str(e)}", exc_info=True)
+            return {"success": False, "error": f"Customer.io update error: {str(e)}"}
+
+    def mark_signup_confirmed(self, user_id: str, email: str, name: str = "") -> Dict[str, Any]:
+        """Mark signup as confirmed in Customer.io by updating user attributes"""
+        if not self.client:
+            return {"success": False, "error": "Customer.io API credentials not configured"}
+
+        try:
+            environment = os.getenv("ENVIRONMENT", "dev").lower()
+
+            # Create basic auth (Pipelines API key as username, no password)
+            auth_string = f"{self.pipelines_api_key}:"
+            encoded_auth = base64.b64encode(auth_string.encode()).decode()
+
+            headers = {
+                "Authorization": f"Basic {encoded_auth}",
+                "Content-Type": "application/json"
+            }
+
             # Update user attributes to mark signup as confirmed
             identify_payload = {
                 "userId": user_id,
@@ -268,13 +326,13 @@ class CustomerIOClient:
                     "signup_confirmed_env": environment
                 }
             }
-            
+
             # Add name if provided
             if name:
                 identify_payload["traits"]["name"] = name
-            
+
             logger.info(f"Customer.io: Marking signup confirmed for {email} in {environment} environment")
-            
+
             # Send identify request to update user attributes
             identify_response = requests.post(
                 f"{self.base_url}/identify",
@@ -282,34 +340,34 @@ class CustomerIOClient:
                 headers=headers,
                 timeout=10
             )
-            
+
             if not identify_response.ok:
                 logger.error(f"Customer.io signup confirmation update failed: {identify_response.status_code} - {identify_response.text}")
                 return {"success": False, "error": f"Failed to update signup confirmation: {identify_response.status_code}"}
-            
+
             logger.info(f"Customer.io: Successfully marked signup confirmed for {email}")
-            
+
             return {
                 "success": True,
                 "message": f"Signup confirmation updated for {email}"
             }
-            
+
         except Exception as e:
             logger.error(f"Customer.io signup confirmation update error: {type(e).__name__}: {str(e)}", exc_info=True)
             return {"success": False, "error": f"Customer.io update error: {str(e)}"}
     
     def send_transactional_email(self, message_id: str, email: str, message_data: Dict = None) -> Dict[str, Any]:
         """Send transactional email using Customer.io Transactional API"""
-        if not self.client:
-            return {"success": False, "error": "Customer.io API credentials not configured"}
-        
+        if not self.app_api_key:
+            return {"success": False, "error": "Customer.io App API Key not configured"}
+
         try:
             # Use Bearer token authentication for App API Key
             headers = {
-                "Authorization": f"Bearer {self.api_key}",
+                "Authorization": f"Bearer {self.app_api_key}",
                 "Content-Type": "application/json"
             }
-            
+
             # Transactional email payload
             payload = {
                 "to": email,
@@ -319,10 +377,10 @@ class CustomerIOClient:
                 },
                 "message_data": message_data or {}
             }
-            
+
             logger.info(f"Customer.io: Sending transactional email '{message_id}' to {email}")
             logger.info(f"Customer.io: Full payload: {payload}")
-            
+
             # Send transactional email request
             response = requests.post(
                 f"{self.transactional_url}/send/email",
@@ -330,70 +388,18 @@ class CustomerIOClient:
                 headers=headers,
                 timeout=10
             )
-            
+
             if response.ok:
                 logger.info(f"Customer.io: Successfully sent '{message_id}' to {email}")
                 return {"success": True, "message": f"Transactional email '{message_id}' sent to {email}"}
             else:
                 logger.error(f"Customer.io transactional email failed: {response.status_code} - {response.text}")
                 return {"success": False, "error": f"Failed to send transactional email: {response.status_code}"}
-            
+
         except Exception as e:
             logger.error(f"Customer.io transactional email error: {type(e).__name__}: {str(e)}", exc_info=True)
             return {"success": False, "error": f"Transactional email error: {str(e)}"}
-    
-    def add_to_segment(self, email: str, segment_name: str, user_data: Dict = None) -> Dict[str, Any]:
-        """Add user to a Customer.io segment"""
-        if not self.client:
-            return {"success": False, "error": "Customer.io API credentials not configured"}
-        
-        try:
-            # Generate user ID for this email
-            user_id = str(uuid.uuid4()).replace('-', '')
-            environment = os.getenv("ENVIRONMENT", "dev").lower()
-            
-            # Create basic auth (API key as username, no password)
-            auth_string = f"{self.api_key}:"
-            encoded_auth = base64.b64encode(auth_string.encode()).decode()
-            
-            headers = {
-                "Authorization": f"Basic {encoded_auth}",
-                "Content-Type": "application/json"
-            }
-            
-            # Identify user with segment flag
-            identify_payload = {
-                "userId": user_id,
-                "traits": {
-                    "email": email,
-                    f"segment_{segment_name}": True,
-                    f"added_to_{segment_name}_at": datetime.now().isoformat(),
-                    "environment": environment,
-                    **(user_data or {})
-                }
-            }
-            
-            logger.info(f"Customer.io: Adding {email} to segment '{segment_name}'")
-            
-            # Send identify request with segment flag
-            response = requests.post(
-                f"{self.base_url}/identify",
-                json=identify_payload,
-                headers=headers,
-                timeout=10
-            )
-            
-            if response.ok:
-                logger.info(f"Customer.io: Successfully added {email} to segment '{segment_name}'")
-                return {"success": True, "message": f"Added {email} to segment '{segment_name}'"}
-            else:
-                logger.error(f"Customer.io segment addition failed: {response.status_code} - {response.text}")
-                return {"success": False, "error": f"Failed to add to segment: {response.status_code}"}
-            
-        except Exception as e:
-            logger.error(f"Customer.io segment addition error: {type(e).__name__}: {str(e)}", exc_info=True)
-            return {"success": False, "error": f"Segment addition error: {str(e)}"}
-    
+
     # Specific transactional email methods
     def send_signup_confirmation_transactional(self, email: str, name: str = "", magic_link_url: str = "", verification_code: str = "") -> Dict[str, Any]:
         """Send signup confirmation using transactional email"""
@@ -413,13 +419,14 @@ class CustomerIOClient:
         }
         return self.send_transactional_email(message_id, email, message_data)
     
-    def send_signup_reminder_transactional(self, email: str, name: str = "", magic_link_url: str = "") -> Dict[str, Any]:
+    def send_signup_reminder_transactional(self, email: str, name: str = "", magic_link_url: str = "", verification_code: str = "") -> Dict[str, Any]:
         """Send signup reminder using transactional email"""
         message_id = os.getenv("CUSTOMERIO_SIGNUP_REMINDER_MESSAGE_ID", "signup_reminder")
         message_data = {
             "email": email,
             "name": name,
-            "magic_link_url": magic_link_url
+            "magic_link_url": magic_link_url,
+            "verification_code": verification_code
         }
         return self.send_transactional_email(message_id, email, message_data)
     

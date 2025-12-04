@@ -5,6 +5,7 @@ import uuid
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import functools
+from feed_cache_service import get_feed_cache_service
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,9 @@ class SupabasePostsClient:
         self.client = supabase_client
         # Thread pool for parallelizing I/O-bound operations like signed URL generation
         self._thread_pool = ThreadPoolExecutor(max_workers=10)
+        # Initialize feed cache service with event-based invalidation
+        self.feed_cache = get_feed_cache_service()
+        self.feed_cache.set_supabase_client(supabase_client.service_client)
 
     def _generate_signed_url_for_media(self, media_item: Dict) -> str:
         """
@@ -236,6 +240,11 @@ class SupabasePostsClient:
 
             # Fetch and return the complete post data
             complete_post = self.get_post(post_id, user_id)
+
+            # Invalidate feed cache (application-level)
+            self.feed_cache.invalidate_via_database()
+            logger.info(f"Feed cache invalidated after post creation: {post_id}")
+
             if complete_post["success"]:
                 return {"success": True, "data": complete_post["data"]}
             else:
@@ -536,6 +545,7 @@ class SupabasePostsClient:
                         "created_at": post.get("created_at"),
                         "updated_at": post.get("updated_at"),
                         "is_published": True,  # Default to True until is_published column is added
+                        "is_pinned": post.get("is_pinned", False),
                         "podcast_episode_url": post.get("podcast_episode_url"),
                         "likes_count": post.get("likes_count", 0),
                         "comments_count": post.get("comments_count", 0),
@@ -606,8 +616,20 @@ class SupabasePostsClient:
             return {"success": False, "error": str(e)}
     
     async def get_feed(self, user_id: str, limit: int = 20, cursor: Optional[str] = None, offset: Optional[int] = None) -> Dict:
-        """Get feed showing all posts in the database with current user data"""
+        """Get feed showing all posts in the database with current user data (with event-based caching)"""
         try:
+            # Check cache first (event-based + TTL validation)
+            cached_result = self.feed_cache.get(user_id, limit, cursor, offset)
+            if cached_result:
+                logger.debug(f"Returning feed from cache for user {user_id[:8]}...")
+                return {
+                    "success": True,
+                    "data": cached_result
+                }
+
+            # Cache miss - fetch fresh data
+            logger.debug(f"Feed cache miss for user {user_id[:8]}..., fetching from database")
+
             # Show all posts from all users, not just connections
             # This creates a public feed where everyone sees all content
 
@@ -707,6 +729,7 @@ class SupabasePostsClient:
                             "created_at": post.get("created_at"),
                             "updated_at": post.get("updated_at"),
                             "is_published": True,  # Default to True until is_published column is added
+                            "is_pinned": post.get("is_pinned", False),
                             "podcast_episode_url": post.get("podcast_episode_url"),
                             "likes_count": post.get("likes_count", 0),
                             "comments_count": post.get("comments_count", 0),
@@ -766,6 +789,7 @@ class SupabasePostsClient:
                                 "created_at": post.get("created_at"),
                                 "updated_at": post.get("updated_at"),
                                 "is_published": True,  # Default to True until is_published column is added
+                                "is_pinned": post.get("is_pinned", False),
                                 "podcast_episode_url": post.get("podcast_episode_url"),
                                 "likes_count": 0,
                                 "comments_count": 0,
@@ -814,15 +838,22 @@ class SupabasePostsClient:
             if offset is not None:
                 next_offset = offset + limit if len(posts) == limit else None
 
+            # Prepare response data
+            response_data = {
+                "posts": formatted_posts,
+                "next_cursor": next_cursor,
+                "next_offset": next_offset,
+                "has_more": len(posts) == limit,
+                "total_returned": len(formatted_posts)
+            }
+
+            # Cache the result (will be automatically invalidated by database triggers)
+            self.feed_cache.set(user_id, limit, cursor, offset, response_data)
+            logger.debug(f"Cached feed for user {user_id[:8]}...")
+
             return {
                 "success": True,
-                "data": {
-                    "posts": formatted_posts,
-                    "next_cursor": next_cursor,
-                    "next_offset": next_offset,
-                    "has_more": len(posts) == limit,
-                    "total_returned": len(formatted_posts)
-                }
+                "data": response_data
             }
             
         except Exception as e:
@@ -851,7 +882,11 @@ class SupabasePostsClient:
             result = self.client.service_client.table("posts").update(
                 update_fields
             ).eq("id", post_id).execute()
-            
+
+            # Invalidate feed cache (application-level)
+            self.feed_cache.invalidate_via_database()
+            logger.info(f"Feed cache invalidated after post update: {post_id}")
+
             return {"success": True, "data": result.data[0] if result.data else None}
             
         except Exception as e:
@@ -873,7 +908,11 @@ class SupabasePostsClient:
             result = self.client.service_client.table("posts").update({
                 "deleted_at": datetime.utcnow().isoformat()
             }).eq("id", post_id).execute()
-            
+
+            # Invalidate feed cache (application-level)
+            self.feed_cache.invalidate_via_database()
+            logger.info(f"Feed cache invalidated after post deletion: {post_id}")
+
             return {"success": True}
             
         except Exception as e:
@@ -906,6 +945,10 @@ class SupabasePostsClient:
                 # Decrement count
                 self.client.service_client.rpc("decrement_post_likes", {"post_id": post_id}).execute()
 
+                # Invalidate feed cache (application-level)
+                self.feed_cache.invalidate_via_database()
+                logger.info(f"Feed cache invalidated after post unlike: {post_id}")
+
                 return {"success": True, "liked": False}
             else:
                 # Like
@@ -924,6 +967,10 @@ class SupabasePostsClient:
                     asyncio.create_task(activity_service.log_activity(user_id, "post_liked", {"post_id": post_id}))
                 except Exception as e:
                     logger.warning(f"Failed to log post_liked activity: {str(e)}")
+
+                # Invalidate feed cache (application-level)
+                self.feed_cache.invalidate_via_database()
+                logger.info(f"Feed cache invalidated after post like: {post_id}")
 
                 return {"success": True, "liked": True}
 
@@ -961,6 +1008,10 @@ class SupabasePostsClient:
                 except Exception as e:
                     logger.warning(f"Failed to log comment_created activity: {str(e)}")
 
+                # Invalidate feed cache (application-level)
+                self.feed_cache.invalidate_via_database()
+                logger.info(f"Feed cache invalidated after comment creation: {comment_id}")
+
                 return {"success": True, "data": result.data[0]}
             
             return {"success": False, "error": "Failed to add comment"}
@@ -994,6 +1045,11 @@ class SupabasePostsClient:
                     comment_data["is_edited"] = comment_data["created_at"] != comment_data["updated_at"]
                 else:
                     comment_data["is_edited"] = False
+
+                # Invalidate feed cache (application-level)
+                self.feed_cache.invalidate_via_database()
+                logger.info(f"Feed cache invalidated after comment edit: {comment_id}")
+
                 return {"success": True, "data": comment_data}
             else:
                 return {"success": False, "error": "Comment not found, unauthorized, or already deleted"}
@@ -1038,7 +1094,11 @@ class SupabasePostsClient:
                 # If it was a reply, decrement reply count on parent
                 if comment.get("parent_comment_id"):
                     self.client.service_client.rpc("decrement_comment_replies", {"comment_id": comment["parent_comment_id"]}).execute()
-                
+
+                # Invalidate feed cache (application-level)
+                self.feed_cache.invalidate_via_database()
+                logger.info(f"Feed cache invalidated after comment deletion: {comment_id}")
+
                 logger.info(f"User {user_id} deleted comment {comment_id}")
                 return {"success": True, "message": "Comment deleted successfully"}
             else:
@@ -1067,11 +1127,12 @@ class SupabasePostsClient:
                 # Get unique user IDs from comments
                 unique_user_ids = list(set(c["user_id"] for c in comments))
                 
-                # Fetch user data from auth.users and user_signup_tracking
+                # Fetch user data from auth.users, user_signup_tracking, and user_profiles
                 users_data = {}
                 signup_tracking_data = {}
                 podcast_claims_data = {}
-                
+                user_profiles_data = {}
+
                 try:
                     # Fetch auth user data one by one to avoid loading all users
                     for uid in unique_user_ids:
@@ -1087,6 +1148,16 @@ class SupabasePostsClient:
                         except Exception:
                             # Skip users that can't be fetched
                             pass
+
+                    # Batch fetch user profile data (includes avatar_url)
+                    if unique_user_ids:
+                        profiles_result = self.client.service_client.table("user_profiles").select(
+                            "user_id, avatar_url"
+                        ).in_("user_id", unique_user_ids).execute()
+
+                        if profiles_result.data:
+                            for profile in profiles_result.data:
+                                user_profiles_data[profile["user_id"]] = profile
                     
                     # Fetch additional user data from user_signup_tracking
                     if unique_user_ids:
@@ -1164,6 +1235,15 @@ class SupabasePostsClient:
                             except Exception:
                                 pass
 
+                        # Batch fetch user profile data for new reply authors (includes avatar_url)
+                        profiles_result = self.client.service_client.table("user_profiles").select(
+                            "user_id, avatar_url"
+                        ).in_("user_id", new_reply_user_ids).execute()
+
+                        if profiles_result.data:
+                            for profile in profiles_result.data:
+                                user_profiles_data[profile["user_id"]] = profile
+
                         # Batch fetch signup tracking data for new reply authors
                         signup_result = self.client.service_client.table("user_signup_tracking") \
                             .select("user_id, email, name") \
@@ -1206,6 +1286,43 @@ class SupabasePostsClient:
                                                 "podcast_name": podcast["title"]
                                             }
 
+                # Generate presigned URLs for all avatars
+                import os
+                from media_service import MediaService
+                media_service = MediaService()
+                r2_public_url = os.getenv('R2_PUBLIC_URL', '')
+
+                signed_avatar_urls = {}
+                for uid, profile in user_profiles_data.items():
+                    avatar_url = profile.get("avatar_url")
+                    if avatar_url and r2_public_url:
+                        try:
+                            # Extract storage path from the URL
+                            storage_path = avatar_url.replace(f"{r2_public_url}/", "")
+                            # Generate signed URL with 1 hour expiry
+                            signed_url = media_service.generate_signed_url(storage_path, expiry=3600)
+                            signed_avatar_urls[uid] = signed_url
+                        except Exception as e:
+                            logger.warning(f"Failed to generate signed URL for avatar {avatar_url}: {e}")
+                            signed_avatar_urls[uid] = None
+                    else:
+                        signed_avatar_urls[uid] = None
+
+                # Batch fetch comment likes for current user
+                comment_likes_set = set()
+                if user_id:
+                    all_comment_ids = [c["id"] for c in comments] + [r["id"] for r in replies]
+                    if all_comment_ids:
+                        try:
+                            likes_result = self.client.service_client.table("comment_likes").select(
+                                "comment_id"
+                            ).eq("user_id", user_id).in_("comment_id", all_comment_ids).execute()
+
+                            if likes_result.data:
+                                comment_likes_set = set(like["comment_id"] for like in likes_result.data)
+                        except Exception as e:
+                            logger.error(f"Failed to fetch comment likes: {str(e)}")
+
                 # Group replies by parent_comment_id
                 replies_by_parent = {}
                 for reply in replies:
@@ -1234,9 +1351,10 @@ class SupabasePostsClient:
                         email = signup_data.get("email") or user_data.get("email")
                         if email:
                             name = email.split('@')[0]
-                    
-                    # Get avatar_url and bio from auth metadata only
-                    avatar_url = user_metadata.get("avatar_url")
+
+                    # Get avatar_url from presigned URLs
+                    avatar_url = signed_avatar_urls.get(comment["user_id"])
+                    # Get bio from auth metadata only
                     bio = user_metadata.get("bio")
                     
                     # Get podcast info from claims (default to None if not found)
@@ -1271,33 +1389,44 @@ class SupabasePostsClient:
                             if reply_email:
                                 reply_name = reply_email.split('@')[0]
 
+                        # Get avatar_url from presigned URLs
+                        reply_avatar_url = signed_avatar_urls.get(reply["user_id"])
+
                         reply_is_edited = False
                         if reply.get("created_at") and reply.get("updated_at"):
                             reply_is_edited = reply["created_at"] != reply["updated_at"]
 
                         formatted_reply = {
                             **reply,
+                            "created_at": reply.get("created_at"),
+                            "updated_at": reply.get("updated_at"),
                             "user": {
                                 "name": reply_name,
+                                "avatar_url": reply_avatar_url,
                                 "podcast_name": reply_podcast_claim.get("podcast_name"),
                                 "podcast_id": reply_podcast_claim.get("podcast_id"),
                                 "connection_status": None
                             },
                             "is_edited": reply_is_edited,
-                            "edited_at": reply.get("updated_at") if reply_is_edited else None
+                            "edited_at": reply.get("updated_at") if reply_is_edited else None,
+                            "is_liked": reply["id"] in comment_likes_set
                         }
                         formatted_replies.append(formatted_reply)
 
                     formatted_comment = {
                         **comment,
+                        "created_at": comment.get("created_at"),
+                        "updated_at": comment.get("updated_at"),
                         "user": {
                             "name": name,
+                            "avatar_url": avatar_url,
                             "podcast_name": podcast_name,
                             "podcast_id": podcast_id,
                             "connection_status": connection_status
                         },
                         "is_edited": is_edited,
                         "edited_at": comment.get("updated_at") if is_edited else None,
+                        "is_liked": comment["id"] in comment_likes_set,
                         "replies": formatted_replies
                     }
 
@@ -1404,6 +1533,10 @@ class SupabasePostsClient:
                 # Decrement count
                 self.client.service_client.rpc("decrement_comment_likes", {"comment_id": comment_id}).execute()
 
+                # Invalidate feed cache (application-level)
+                self.feed_cache.invalidate_via_database()
+                logger.info(f"Feed cache invalidated after comment unlike: {comment_id}")
+
                 return {"success": True, "liked": False}
             else:
                 # Like
@@ -1422,6 +1555,10 @@ class SupabasePostsClient:
                     asyncio.create_task(activity_service.log_activity(user_id, "comment_liked", {"comment_id": comment_id}))
                 except Exception as e:
                     logger.warning(f"Failed to log comment_liked activity: {str(e)}")
+
+                # Invalidate feed cache (application-level)
+                self.feed_cache.invalidate_via_database()
+                logger.info(f"Feed cache invalidated after comment like: {comment_id}")
 
                 return {"success": True, "liked": True}
 
@@ -1731,6 +1868,7 @@ class SupabasePostsClient:
                             "created_at": post.get("created_at"),
                             "updated_at": post.get("updated_at"),
                             "is_published": True,  # Default to True until is_published column is added
+                            "is_pinned": post.get("is_pinned", False),
                             "podcast_episode_url": post.get("podcast_episode_url"),
                             "likes_count": post.get("likes_count", 0),
                             "comments_count": post.get("comments_count", 0),
@@ -1964,6 +2102,7 @@ class SupabasePostsClient:
                     "id": post["id"],
                     "content": post["content"],
                     "post_type": post.get("post_type", "text"),
+                    "is_pinned": post.get("is_pinned", False),
                     "media_items": media_items,
                     "media_urls": media_urls,  # Add media_urls for compatibility
                     "created_at": post["created_at"],

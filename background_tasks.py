@@ -91,12 +91,16 @@ async def send_signup_reminders() -> Dict:
                 else:
                     logger.warning(f"Failed to generate reminder magic link for {user['email']}: {magic_link_result.get('error')}")
                     continue  # Skip this user if we can't generate a magic link
-                
-                # Send reminder email with magic link
+
+                # Generate verification code
+                short_code = supabase_client.generate_short_verification_code(user["user_id"], length=6)
+
+                # Send reminder email with magic link and verification code
                 result = customerio_client.send_signup_reminder_transactional(
                     email=user["email"],
                     name=user.get("name", ""),
-                    magic_link_url=magic_link_url
+                    magic_link_url=magic_link_url,
+                    verification_code=short_code
                 )
                 
                 if result["success"]:
@@ -247,6 +251,7 @@ async def sync_signup_confirmations() -> Dict:
             try:
                 # Mark signup as confirmed in Customer.io
                 result = customerio_client.mark_signup_confirmed(
+                    user_id=user["user_id"],
                     email=user["email"],
                     name=user.get("name", "")
                 )

@@ -1,6 +1,7 @@
 import os
 from typing import Dict, List, Optional
 import logging
+import html
 from listennotes import podcast_api
 
 logger = logging.getLogger(__name__)
@@ -94,15 +95,17 @@ class ListenNotesClient:
                     query_lower = query.lower().strip()
                     
                     for podcast in all_results:
-                        title = podcast.get("title_original", "").lower().strip()
+                        # Decode HTML entities for proper comparison (e.g., &amp; -> &)
+                        title_raw = podcast.get("title_original", "")
+                        title = html.unescape(title_raw).lower().strip()
                         if title == query_lower:
-                            logger.info(f"Found exact match: '{podcast.get('title_original', '')}'")
+                            logger.info(f"Found exact match: '{title_raw}'")
                             exact_matches.append({
                                 "id": podcast.get("id"),
-                                "title": podcast.get("title_original", ""),
-                                "description": podcast.get("description_original", ""),
+                                "title": html.unescape(title_raw),
+                                "description": html.unescape(podcast.get("description_original", "")),
                                 "image": podcast.get("image", ""),
-                                "publisher": podcast.get("publisher_original", ""),
+                                "publisher": html.unescape(podcast.get("publisher_original", "")),
                                 "email": podcast.get("email", "")
                             })
                     
@@ -142,18 +145,23 @@ class ListenNotesClient:
             
             if result["success"]:
                 podcast = result["data"]
+                # Decode HTML entities (e.g., &amp; -> &)
                 return {
                     "success": True,
                     "podcast": {
                         "id": podcast.get("id"),
-                        "title": podcast.get("title_original", ""),
-                        "description": podcast.get("description_original", ""),
+                        "title": html.unescape(podcast.get("title_original", "")),
+                        "description": html.unescape(podcast.get("description_original", "")),
                         "image": podcast.get("image", ""),
-                        "publisher": podcast.get("publisher_original", ""),
+                        "publisher": html.unescape(podcast.get("publisher_original", "")),
                         "website": podcast.get("website", ""),
                         "rss": podcast.get("rss", ""),
                         "email": podcast.get("email", ""),  # Direct email access!
-                        "total_episodes": podcast.get("total_episodes", 0)
+                        "total_episodes": podcast.get("total_episodes", 0),
+                        "genre_ids": podcast.get("genre_ids", []),
+                        "thumbnail": podcast.get("thumbnail", ""),
+                        "language": podcast.get("language", ""),
+                        "explicit_content": podcast.get("explicit_content", False)
                     }
                 }
             
@@ -179,11 +187,12 @@ class ListenNotesClient:
                 # Transform the response to match our model
                 podcasts = []
                 for podcast in result["data"].get("podcasts", [])[:limit]:
+                    # Decode HTML entities (e.g., &amp; -> &)
                     podcasts.append({
                         "id": podcast.get("id"),
-                        "title": podcast.get("title_original", ""),
-                        "description": podcast.get("description_original", ""),
-                        "publisher": podcast.get("publisher_original", ""),
+                        "title": html.unescape(podcast.get("title_original", "")),
+                        "description": html.unescape(podcast.get("description_original", "")),
+                        "publisher": html.unescape(podcast.get("publisher_original", "")),
                         "image": podcast.get("image", ""),
                         "email": podcast.get("email", "")
                     })
@@ -212,18 +221,24 @@ class ListenNotesClient:
             
             if result["success"] and result.get("data"):
                 data = result["data"]
-                
+
+                # Decode HTML entities (e.g., &amp; -> &)
                 return {
                     "success": True,
                     "data": {
                         "id": data.get("id"),
-                        "title": data.get("title"),
-                        "publisher": data.get("publisher"),
+                        "title": html.unescape(data.get("title", "")),
+                        "publisher": html.unescape(data.get("publisher", "")),
                         "image": data.get("image"),
-                        "description": data.get("description"),
+                        "description": html.unescape(data.get("description", "")),
                         "email": data.get("email", ""),
                         "website": data.get("website", ""),
-                        "total_episodes": data.get("total_episodes", 0)
+                        "total_episodes": data.get("total_episodes", 0),
+                        "genre_ids": data.get("genre_ids", []),
+                        "rss": data.get("rss", ""),
+                        "thumbnail": data.get("thumbnail", ""),
+                        "language": data.get("language", ""),
+                        "explicit_content": data.get("explicit_content", False)
                     }
                 }
             else:

@@ -17,6 +17,7 @@ from io import BytesIO
 
 from supabase_client import SupabaseClient
 from user_profile_cache_service import get_user_profile_cache_service
+from datetime_utils import format_datetime_central
 
 logger = logging.getLogger(__name__)
 
@@ -149,8 +150,8 @@ class UserProfileService:
                 "podcast_id": podcast_data.get("id"),
                 "podcast_name": podcast_data.get("title"),
                 "connections_count": connections_count,
-                "created_at": profile_data.get("created_at"),
-                "updated_at": profile_data.get("updated_at")
+                "created_at": format_datetime_central(profile_data.get("created_at")),
+                "updated_at": format_datetime_central(profile_data.get("updated_at"))
             }
 
             # Cache the profile
@@ -209,11 +210,18 @@ class UserProfileService:
         try:
             # Validate avatar file
             await self._validate_avatar_file(avatar_file)
-            
+
             # Read and process avatar
             avatar_file.file.seek(0)
             file_content = await avatar_file.read()
-            
+
+            # Log file details for debugging
+            logger.info(f"Avatar upload - user: {user_id}, filename: {avatar_file.filename}, "
+                       f"content_type: {avatar_file.content_type}, size: {len(file_content)} bytes")
+
+            if len(file_content) == 0:
+                raise HTTPException(400, "Uploaded file is empty")
+
             # Process image (resize and optimize)
             processed_avatar = await self._process_avatar(file_content)
             
@@ -239,9 +247,12 @@ class UserProfileService:
             cache.invalidate(user_id)
             logger.debug(f"Invalidated cache for user {user_id} after avatar upload")
 
+            # Generate pre-signed URL for response
+            signed_avatar_url = self._generate_signed_avatar_url(avatar_url)
+
             return {
                 "success": True,
-                "avatar_url": avatar_url
+                "avatar_url": signed_avatar_url
             }
             
         except Exception as e:
@@ -291,9 +302,14 @@ class UserProfileService:
     async def _process_avatar(self, image_content: bytes) -> bytes:
         """Process avatar image: resize and optimize"""
         try:
+            logger.debug(f"Processing avatar image, content size: {len(image_content)} bytes")
+
             # Open image
-            image = Image.open(BytesIO(image_content))
-            
+            image_bytes = BytesIO(image_content)
+            image = Image.open(image_bytes)
+
+            logger.debug(f"Image opened successfully - format: {image.format}, mode: {image.mode}, size: {image.size}")
+
             # Convert to RGB if necessary (handles RGBA, P mode images)
             if image.mode in ('RGBA', 'P'):
                 # Create white background for transparent images
@@ -304,28 +320,28 @@ class UserProfileService:
                 image = background
             elif image.mode != 'RGB':
                 image = image.convert('RGB')
-            
+
             # Resize to avatar dimensions (square crop from center)
             width, height = image.size
-            
+
             # Crop to square from center
             if width != height:
                 size = min(width, height)
                 left = (width - size) // 2
                 top = (height - size) // 2
                 image = image.crop((left, top, left + size, top + size))
-            
+
             # Resize to target size
             image = image.resize(self.AVATAR_SIZE, Image.Resampling.LANCZOS)
-            
+
             # Convert to bytes
             output = BytesIO()
             image.save(output, format='JPEG', quality=85, optimize=True)
             return output.getvalue()
-            
+
         except Exception as e:
-            logger.error(f"Avatar processing failed: {str(e)}")
-            raise HTTPException(400, "Invalid image file")
+            logger.error(f"Avatar processing failed: {str(e)}, content length: {len(image_content) if image_content else 0}")
+            raise HTTPException(400, f"Invalid image file: {str(e)}")
 
     async def _upload_avatar_to_r2(self, image_content: bytes, storage_path: str) -> str:
         """Upload avatar to Cloudflare R2"""
@@ -373,24 +389,39 @@ class UserProfileService:
 
     async def _update_avatar_url(self, user_id: str, avatar_url: Optional[str]):
         """Update avatar URL in user profile"""
-        # Check if profile exists
-        existing_result = self.supabase_client.service_client.table("user_profiles").select(
-            "id"
-        ).eq("user_id", user_id).execute()
-        
-        update_data = {"avatar_url": avatar_url}
-        
-        if existing_result.data:
-            # Update existing profile
-            self.supabase_client.service_client.table("user_profiles").update(
-                update_data
+        try:
+            # Check if profile exists
+            existing_result = self.supabase_client.service_client.table("user_profiles").select(
+                "id"
             ).eq("user_id", user_id).execute()
-        else:
-            # Create new profile
-            update_data["user_id"] = user_id
-            self.supabase_client.service_client.table("user_profiles").insert(
-                update_data
-            ).execute()
+
+            update_data = {"avatar_url": avatar_url}
+
+            if existing_result.data:
+                # Update existing profile
+                result = self.supabase_client.service_client.table("user_profiles").update(
+                    update_data
+                ).eq("user_id", user_id).execute()
+
+                if not result.data:
+                    raise Exception("Failed to update avatar URL in database")
+
+                logger.info(f"Successfully updated avatar URL for user {user_id}")
+            else:
+                # Create new profile
+                update_data["user_id"] = user_id
+                result = self.supabase_client.service_client.table("user_profiles").insert(
+                    update_data
+                ).execute()
+
+                if not result.data:
+                    raise Exception("Failed to insert avatar URL in database")
+
+                logger.info(f"Successfully created profile with avatar URL for user {user_id}")
+
+        except Exception as e:
+            logger.error(f"Failed to update avatar URL for user {user_id}: {str(e)}")
+            raise
 
     async def get_user_avatar(self, user_id: str) -> Dict[str, Any]:
         """
