@@ -31,6 +31,8 @@ from fastapi.responses import (
     RedirectResponse,
     Response,
 )
+import django
+from fastadmin import fastapi_app as admin_app
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy.orm import Session
@@ -190,6 +192,9 @@ from feed_cache_service import get_feed_cache_service
 from user_settings_service import get_user_settings_service
 from notification_service import NotificationService, notification_manager
 from resource_interaction_service import get_resource_interaction_service
+import os
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "admin.settings")
+django.setup()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -8245,6 +8250,7 @@ async def create_grant_application(
 #         logger.error(f"Manual podcast categorization error: {str(e)}")
 #         raise HTTPException(status_code=500, detail=f"Categorization failed: {str(e)}")
 
+app.mount("/admin", admin_app)
 
 if __name__ == "__main__":
     import uvicorn
