@@ -4,6 +4,7 @@ from django.contrib.auth.models import (
     PermissionsMixin,
     BaseUserManager,
 )
+from django.contrib.postgres.fields import ArrayField
 from django.db import models
 import uuid
 from fastadmin import (
@@ -56,6 +57,65 @@ class Admin(AbstractBaseUser):
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []
+
+
+class Event(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    host_user_id = models.UUIDField(null=True, blank=True)
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(null=True, blank=True)
+
+    start_date = models.DateTimeField()
+    end_date = models.DateTimeField(null=True, blank=True)
+
+    location = models.TextField(null=True, blank=True)
+    is_online = models.BooleanField(default=False)
+
+    url = models.URLField(null=True, blank=True)
+    image_url = models.URLField(null=True, blank=True)
+
+    is_featured = models.BooleanField(default=False)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    required_plan = models.CharField(max_length=50, default="free")
+
+    is_premium = models.BooleanField(default=False)
+
+    event_date = models.DateTimeField(null=True, blank=True)
+
+    category = models.CharField(max_length=50, default="general")
+
+    event_type = models.CharField(max_length=50, default="webinar")
+
+    is_paid = models.BooleanField(default=False)
+    price = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+
+    meeting_url = models.URLField(null=True, blank=True)
+    replay_video_url = models.URLField(null=True, blank=True)
+
+    tags = ArrayField(
+        base_field=models.CharField(max_length=100), default=list, blank=True
+    )
+
+    timezone = models.CharField(max_length=50, default="UTC")
+
+    status = models.CharField(max_length=50, default="scheduled")
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    host_name = models.CharField(max_length=255, default="PodGround")
+
+    calget_link = models.TextField(null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = "events"
+
+    def __str__(self):
+        return self.title
 
 
 class User(models.Model):
@@ -514,6 +574,17 @@ class UserSubscriptionAdmin(DjangoInlineModelAdmin):
 class SubscriptionPlanAdmin(DjangoModelAdmin):
     list_display = ("name", "display_name", "is_active")
     inlines = (UserSubscriptionAdmin,)
+
+
+@register(Event)
+class EventsAdmin(DjangoModelAdmin):
+    list_display = (
+        "title",
+        "location",
+        "is_featured",
+        "start_date",
+        "host_user_id",
+    )
 
 
 ####
