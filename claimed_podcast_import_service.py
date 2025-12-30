@@ -87,7 +87,7 @@ class ClaimedPodcastImportService:
                 if self.listennotes_api_key:
                     from listennotes_client import ListenNotesClient
 
-                    ln_client = ListenNotesClient(self.listennotes_api_key)
+                    ln_client = ListenNotesClient()
                     podcast_result = ln_client.get_podcast_by_id(listennotes_id)
 
                     if podcast_result and podcast_result.get('success') and podcast_result.get('data'):

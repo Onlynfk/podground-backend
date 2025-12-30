@@ -227,6 +227,123 @@ class GlobalSearchService:
         # Return original URL if it's external (podcast/episode images from ListenNotes, etc.)
         return url
 
+    async def _regenerate_urls_in_search_results(self, search_response: Dict[str, Any]) -> None:
+        """
+        Regenerate fresh pre-signed URLs for all R2 images in cached search results.
+        This ensures URLs are always valid even when served from cache.
+
+        Args:
+            search_response: The cached search response to update
+        """
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            from user_profile_service import UserProfileService
+
+            results = search_response.get('results', {})
+
+            # Collect all R2 image URLs and user avatar regeneration tasks
+            image_regeneration_tasks = []
+            user_profile_tasks = []
+
+            # Podcasts - regenerate image_url (only R2 images, not ListenNotes)
+            for podcast in results.get('podcasts', []):
+                if podcast.get('image_url') and self.r2_public_url and podcast['image_url'].startswith(self.r2_public_url):
+                    image_regeneration_tasks.append(('podcast', podcast, 'image_url', podcast['image_url']))
+
+            # Episodes - regenerate image_url (only R2 images, not ListenNotes)
+            for episode in results.get('episodes', []):
+                if episode.get('image_url') and self.r2_public_url and episode['image_url'].startswith(self.r2_public_url):
+                    image_regeneration_tasks.append(('episode', episode, 'image_url', episode['image_url']))
+
+            # Posts - regenerate image_url and author avatar_url
+            for post in results.get('posts', []):
+                if post.get('image_url') and self.r2_public_url and post['image_url'].startswith(self.r2_public_url):
+                    image_regeneration_tasks.append(('post', post, 'image_url', post['image_url']))
+
+                # Collect user IDs for avatar regeneration
+                author = post.get('author', {})
+                if author.get('id'):
+                    user_profile_tasks.append(('post_author', post, author))
+
+            # Comments - regenerate author avatar_url
+            for comment in results.get('comments', []):
+                author = comment.get('author', {})
+                if author.get('id'):
+                    user_profile_tasks.append(('comment_author', comment, author))
+
+            # Messages - regenerate sender avatar_url
+            for message in results.get('messages', []):
+                sender = message.get('sender', {})
+                if sender.get('id'):
+                    user_profile_tasks.append(('message_sender', message, sender))
+
+            # Events - regenerate creator avatar_url
+            for event in results.get('events', []):
+                creator = event.get('creator', {})
+                if creator.get('id'):
+                    user_profile_tasks.append(('event_creator', event, creator))
+
+            # Resources - regenerate image_url
+            for resource in results.get('resources', []):
+                if resource.get('image_url') and self.r2_public_url and resource['image_url'].startswith(self.r2_public_url):
+                    image_regeneration_tasks.append(('resource', resource, 'image_url', resource['image_url']))
+
+            # Users - regenerate avatar_url
+            for user in results.get('users', []):
+                if user.get('id'):
+                    user_profile_tasks.append(('user', None, user))
+
+            # Partners - regenerate logo_url
+            for partner in results.get('partners', []):
+                if partner.get('logo_url') and self.r2_public_url and partner['logo_url'].startswith(self.r2_public_url):
+                    image_regeneration_tasks.append(('partner', partner, 'logo_url', partner['logo_url']))
+
+            # Experts - regenerate avatar_url
+            for expert in results.get('experts', []):
+                if expert.get('avatar_url') and self.r2_public_url and expert['avatar_url'].startswith(self.r2_public_url):
+                    image_regeneration_tasks.append(('expert', expert, 'avatar_url', expert['avatar_url']))
+
+            # Regenerate R2 image URLs in parallel
+            if image_regeneration_tasks:
+                with ThreadPoolExecutor(max_workers=10) as executor:
+                    def regenerate_url_sync(url: str) -> str:
+                        return self._generate_signed_url(url)
+
+                    urls_to_regenerate = [task[3] for task in image_regeneration_tasks]
+                    fresh_urls = list(executor.map(regenerate_url_sync, urls_to_regenerate))
+
+                    # Apply fresh URLs back to results
+                    for idx, (item_type, item, field, old_url) in enumerate(image_regeneration_tasks):
+                        item[field] = fresh_urls[idx]
+
+            # Regenerate user avatars (these come from UserProfileService)
+            if user_profile_tasks:
+                # Extract unique user IDs
+                user_ids = list(set(
+                    user_obj.get('id')
+                    for task_type, parent_obj, user_obj in user_profile_tasks
+                    if user_obj.get('id')
+                ))
+
+                if user_ids:
+                    # Fetch fresh profiles with signed avatar URLs
+                    profile_service = UserProfileService()
+                    fresh_profiles = await profile_service.get_users_by_ids(user_ids)
+                    profiles_map = {p['id']: p for p in fresh_profiles}
+
+                    # Apply fresh avatar URLs
+                    for task_type, parent_obj, user_obj in user_profile_tasks:
+                        user_id = user_obj.get('id')
+                        if user_id in profiles_map:
+                            fresh_avatar_url = profiles_map[user_id].get('avatar_url')
+                            user_obj['avatar_url'] = fresh_avatar_url
+
+            logger.debug(f"Regenerated {len(image_regeneration_tasks)} R2 image URLs and {len(user_profile_tasks)} user avatars in search results")
+
+        except Exception as e:
+            logger.error(f"Error regenerating URLs in search results: {e}")
+            # Don't fail the request if URL regeneration fails
+
     async def search_all(
         self,
         user_id: str,
@@ -256,6 +373,9 @@ class GlobalSearchService:
         # Check cache first (using offset for cache key)
         cached_result = self.cache.get(user_id, query, offset, limit)
         if cached_result:
+            logger.debug(f"Search cache HIT for query '{query}' - regenerating URLs")
+            # Regenerate fresh pre-signed URLs (URLs in cache may be expired)
+            await self._regenerate_urls_in_search_results(cached_result)
             cached_result['cached'] = True
             return cached_result
 

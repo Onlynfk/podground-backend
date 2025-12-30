@@ -39,6 +39,11 @@ def format_datetime_central(
     try:
         # Parse string to datetime if needed
         if isinstance(dt, str):
+            # Check if already formatted (MM/DD/YYYY format) - return as-is
+            if '/' in dt and ('AM' in dt or 'PM' in dt):
+                logger.debug(f"Datetime already formatted, returning as-is: {dt}")
+                return dt
+
             # Handle ISO format strings
             dt_str = dt.replace('Z', '+00:00')
 

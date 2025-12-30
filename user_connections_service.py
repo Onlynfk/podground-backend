@@ -241,17 +241,6 @@ class UserConnectionsService:
             if not result.data:
                 raise Exception("Failed to create connection request")
 
-            # Log activity
-            await self._log_activity(requester_id, "connection_request_sent", {
-                "requestee_id": requestee_id,
-                "connection_id": result.data[0]["id"]
-            })
-
-            await self._log_activity(requestee_id, "connection_request_received", {
-                "requester_id": requester_id,
-                "connection_id": result.data[0]["id"]
-            })
-
             return {
                 "success": True,
                 "connection_id": result.data[0]["id"],
@@ -293,17 +282,6 @@ class UserConnectionsService:
 
             if not update_result.data:
                 raise Exception("Failed to accept connection request")
-
-            # Log activity for both users
-            await self._log_activity(user_id, "connection_accepted", {
-                "connection_id": request_id,
-                "connected_user_id": connection["follower_id"]
-            })
-
-            await self._log_activity(connection["follower_id"], "connection_accepted", {
-                "connection_id": request_id,
-                "connected_user_id": user_id
-            })
 
             return {
                 "success": True,
@@ -382,14 +360,6 @@ class UserConnectionsService:
 
             if not delete_result.data:
                 raise Exception("Failed to remove connection")
-
-            # Log activity
-            other_user_id = connection["following_id"] if connection["follower_id"] == user_id else connection["follower_id"]
-
-            await self._log_activity(user_id, "connection_removed", {
-                "connection_id": connection_id,
-                "removed_user_id": other_user_id
-            })
 
             return {"success": True}
 
@@ -600,15 +570,6 @@ class UserConnectionsService:
         except Exception as e:
             logger.error(f"Failed to get suggested connections for {user_id}: {str(e)}")
             raise HTTPException(500, f"Failed to get suggested connections: {str(e)}")
-
-    async def _log_activity(self, user_id: str, activity_type: str, activity_data: Dict[str, Any]):
-        """Log user activity"""
-        try:
-            from user_activity_service import get_user_activity_service
-            activity_service = get_user_activity_service()
-            await activity_service.log_activity(user_id, activity_type, activity_data)
-        except Exception as e:
-            logger.warning(f"Failed to log activity: {str(e)}")
 
 
 # Global instance

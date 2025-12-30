@@ -219,12 +219,20 @@ class ResourcesService:
                                 )
 
                     if resource_data.get("user_has_access", False):
-                        for field in (
-                            "image_url",
-                            "thumbnail_url",
-                            "url",
-                            "download_url",
-                        ):
+                        if resource.get("type") == "video":
+                            fields_to_sign = (
+                                "image_url",
+                                "thumbnail_url",
+                                "download_url",
+                            )
+                        else:
+                            fields_to_sign = (
+                                "image_url",
+                                "thumbnail_url",
+                                "url",
+                                "download_url",
+                            )
+                        for field in fields_to_sign:
                             val = resource_data.get(field)
                             if val:
                                 resource_data[field] = (
@@ -245,6 +253,53 @@ class ResourcesService:
         except Exception as e:
             logger.error(f"Error getting resources: {str(e)}")
             raise Exception("Failed to get resources")
+
+    async def get_blog_posts(
+        self, limit: int = 20, offset: int = 0
+    ) -> Dict[str, Any]:
+        """
+        Get blog posts (resources where is_blog=True)
+        This endpoint is public and does not require authentication.
+        """
+        try:
+            query = (
+                self.supabase.table("resources")
+                .select("*")
+                .eq("is_blog", True)
+                .eq("type", "article")
+                .order("created_at", desc=True)
+                .range(offset, offset + limit - 1)
+            )
+
+            response = query.execute()
+
+            if response.data:
+                blogs = []
+                for resource in response.data:
+                    content = await article_content_service.get_article_content(
+                        resource["id"]
+                    )
+                    blogs.append(
+                        {
+                            "id": resource["id"],
+                            "slug": resource["id"],
+                            "title": resource["title"],
+                            "summary": resource.get("description"),
+                            "content": content,
+                        }
+                    )
+
+                return {
+                    "blogs": blogs,
+                    "total_count": len(blogs),
+                    "has_more": len(blogs) == limit,
+                }
+
+            return {"blogs": [], "total_count": 0, "has_more": False}
+
+        except Exception as e:
+            logger.error(f"Error getting blog posts: {str(e)}")
+            raise Exception("Failed to get blog posts")
 
     async def get_resource_by_id(
         self, user_id: str, resource_id: str
@@ -349,11 +404,18 @@ class ResourcesService:
                             )
 
                 if resource.get("user_has_access", False):
-                    for field in (
-                        "image_url",
-                        "thumbnail_url",
-                        "url",
-                    ):
+                    if resource.get("type") == "video":
+                        fields_to_sign = (
+                            "image_url",
+                            "thumbnail_url",
+                        )
+                    else:
+                        fields_to_sign = (
+                            "image_url",
+                            "thumbnail_url",
+                            "url",
+                        )
+                    for field in fields_to_sign:
                         val = resource.get(field)
                         if val:
                             resource[field] = (
