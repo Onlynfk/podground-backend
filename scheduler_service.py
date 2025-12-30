@@ -84,13 +84,13 @@ class SchedulerService:
             max_instances=1
         )
         
-        # Job 4: Sync failed waitlist entries to Customer.io every 5 minutes
+        # Job 4: Sync failed waitlist entries to Customer.io every 6 hours
         self.scheduler.add_job(
             sync_failed_waitlist_entries,
-            trigger=IntervalTrigger(minutes=5),  # Run every 5 minutes
+            trigger=IntervalTrigger(hours=6),  # Run every 6 hours
             id="sync_failed_waitlist",
             name="Sync Failed Waitlist Entries",
-            misfire_grace_time=60,  # 1 minute grace time
+            misfire_grace_time=300,  # 5 minute grace time
             coalesce=True,
             max_instances=1  # Prevent overlapping executions
         )
@@ -151,7 +151,7 @@ class SchedulerService:
             coalesce=True,
             max_instances=1
         )
-        
+
         logger.info("Added 9 scheduled jobs: signup_reminders, podcast_claim_reminders, sync_confirmations, sync_failed_waitlist, process_event_reminders, categorize_podcasts, import_claimed_podcasts, refresh_featured_episodes, refresh_stale_episodes")
     
     def get_job_status(self) -> dict:

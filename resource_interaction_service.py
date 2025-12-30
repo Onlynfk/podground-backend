@@ -80,6 +80,15 @@ class ResourceInteractionService:
                 interaction_data=interaction_data or {}
             )
 
+            # Log to activity feed for certain interaction types
+            await self._log_activity_if_needed(
+                user_id=user_id,
+                resource_id=resource_id,
+                resource_type=resource_type,
+                interaction_type=interaction_type,
+                session_id=session_id
+            )
+
             return {
                 "success": True,
                 "interaction_id": interaction_result.data[0]["id"],
@@ -91,6 +100,78 @@ class ResourceInteractionService:
         except Exception as e:
             logger.error(f"Failed to track interaction: {str(e)}")
             raise HTTPException(500, f"Failed to track interaction: {str(e)}")
+
+    async def _log_activity_if_needed(
+        self,
+        user_id: str,
+        resource_id: str,
+        resource_type: str,
+        interaction_type: str,
+        session_id: str
+    ):
+        """
+        Log activity to user activity feed with 24-hour deduplication.
+        Only logs initial interactions: article_opened, video_started, guide_downloaded
+        """
+        try:
+            # Map interaction types to activity types
+            activity_type_mapping = {
+                "article_opened": "article_opened",
+                "video_started": "video_watched",
+                "guide_downloaded": "guide_downloaded"
+            }
+
+            # Only log certain interaction types
+            if interaction_type not in activity_type_mapping:
+                return
+
+            activity_type = activity_type_mapping[interaction_type]
+
+            # Check for existing activity in last 24 hours (deduplication)
+            from datetime import timedelta
+            twenty_four_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+
+            existing_activity = self.supabase_client.service_client.table("user_activity").select(
+                "id"
+            ).eq("user_id", user_id).eq("activity_type", activity_type).gte(
+                "created_at", twenty_four_hours_ago
+            ).execute()
+
+            # Filter to check if this specific resource was logged
+            if existing_activity.data:
+                for activity in existing_activity.data:
+                    # Need to fetch full record to check activity_data
+                    full_activity = self.supabase_client.service_client.table("user_activity").select(
+                        "activity_data"
+                    ).eq("id", activity["id"]).single().execute()
+
+                    if full_activity.data:
+                        activity_data = full_activity.data.get("activity_data", {})
+                        if activity_data.get("resource_id") == resource_id:
+                            # Already logged this resource in last 24 hours
+                            logger.info(f"Skipping activity log - {activity_type} for resource {resource_id} already logged in last 24 hours")
+                            return
+
+            # Log activity
+            from user_activity_service import get_user_activity_service
+            activity_service = get_user_activity_service()
+
+            await activity_service.log_activity(
+                user_id=user_id,
+                activity_type=activity_type,
+                activity_data={
+                    "resource_id": resource_id,
+                    "resource_type": resource_type,
+                    "interaction_type": interaction_type,
+                    "session_id": session_id
+                }
+            )
+
+            logger.info(f"Logged activity: {activity_type} for resource {resource_id}")
+
+        except Exception as e:
+            # Don't fail the main request if activity logging fails
+            logger.warning(f"Failed to log activity for resource interaction: {str(e)}")
 
     async def _update_resource_stats(
         self,

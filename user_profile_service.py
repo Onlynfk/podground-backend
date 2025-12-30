@@ -65,6 +65,16 @@ class UserProfileService:
         if not avatar_url:
             return None
 
+        # Check if already a signed URL (contains X-Amz-Algorithm)
+        if "X-Amz-Algorithm" in avatar_url or "X-Amz-Signature" in avatar_url:
+            logger.debug(f"Avatar URL already signed, returning as-is")
+            return avatar_url
+
+        # Check if URL starts with expected R2 public URL
+        if not avatar_url.startswith(self.r2_public_url):
+            logger.warning(f"Avatar URL doesn't start with R2 public URL: {avatar_url[:100]}...")
+            return avatar_url
+
         # Extract storage path from the URL
         storage_path = avatar_url.replace(f"{self.r2_public_url}/", "")
 
@@ -82,6 +92,9 @@ class UserProfileService:
             cached_profile = cache.get(user_id)
             if cached_profile:
                 logger.debug(f"Returning cached profile for user {user_id}")
+                # Generate fresh signed URL from cached R2 direct URL
+                if cached_profile.get("avatar_url"):
+                    cached_profile["avatar_url"] = self._generate_signed_avatar_url(cached_profile["avatar_url"])
                 return cached_profile
 
             # Get user profile data
@@ -135,9 +148,13 @@ class UserProfileService:
             else:
                 full_name = signup_data.get("name")
 
-            # Generate signed URL for avatar
-            avatar_url = self._generate_signed_avatar_url(profile_data.get("avatar_url"))
+            # Extract storage path from avatar URL for URL regeneration
+            avatar_url = profile_data.get("avatar_url")
+            avatar_storage_path = None
+            if avatar_url and avatar_url.startswith(self.r2_public_url):
+                avatar_storage_path = avatar_url.replace(f"{self.r2_public_url}/", "")
 
+            # Build profile with R2 direct URL (not signed)
             profile = {
                 "id": user_id,
                 "name": full_name,
@@ -146,7 +163,8 @@ class UserProfileService:
                 "email": signup_data.get("email"),
                 "bio": profile_data.get("bio"),
                 "location": profile_data.get("location"),
-                "avatar_url": avatar_url,
+                "avatar_url": avatar_url,  # Store R2 direct URL
+                "avatar_storage_path": avatar_storage_path,  # Store path for URL regeneration
                 "podcast_id": podcast_data.get("id"),
                 "podcast_name": podcast_data.get("title"),
                 "connections_count": connections_count,
@@ -154,9 +172,13 @@ class UserProfileService:
                 "updated_at": format_datetime_central(profile_data.get("updated_at"))
             }
 
-            # Cache the profile
+            # Cache the profile with R2 direct URL
             cache.set(user_id, profile)
             logger.debug(f"Cached profile for user {user_id}")
+
+            # Generate signed URL for response
+            if profile.get("avatar_url"):
+                profile["avatar_url"] = self._generate_signed_avatar_url(profile["avatar_url"])
 
             return profile
 
@@ -487,9 +509,13 @@ class UserProfileService:
             # Find which user_ids are not in cache
             missing_user_ids = [uid for uid in user_ids if uid not in cached_profiles]
 
-            # If all profiles are cached, return them
+            # If all profiles are cached, generate signed URLs and return them
             if not missing_user_ids:
                 logger.debug(f"All {len(user_ids)} profiles found in cache")
+                # Generate fresh signed URLs from cached R2 direct URLs
+                for profile in cached_profiles.values():
+                    if profile.get("avatar_url"):
+                        profile["avatar_url"] = self._generate_signed_avatar_url(profile["avatar_url"])
                 return list(cached_profiles.values())
 
             logger.debug(f"Fetching {len(missing_user_ids)}/{len(user_ids)} profiles from DB (cache miss)")
@@ -556,22 +582,27 @@ class UserProfileService:
                 else:
                     full_name = signup.get("name")
 
-                # Generate signed URL for avatar
-                avatar_url = self._generate_signed_avatar_url(profile.get("avatar_url"))
+                # Extract storage path from avatar URL for URL regeneration
+                avatar_url = profile.get("avatar_url")
+                avatar_storage_path = None
+                if avatar_url and avatar_url.startswith(self.r2_public_url):
+                    avatar_storage_path = avatar_url.replace(f"{self.r2_public_url}/", "")
 
+                # Build profile with R2 direct URL (not signed)
                 user_profile = {
                     "id": user_id,
                     "name": full_name,
                     "email": signup.get("email"),
                     "bio": profile.get("bio"),
                     "location": profile.get("location"),
-                    "avatar_url": avatar_url,
+                    "avatar_url": avatar_url,  # Store R2 direct URL
+                    "avatar_storage_path": avatar_storage_path,  # Store path for URL regeneration
                     "podcast_id": podcast.get("id"),
                     "podcast_name": podcast.get("title")
                 }
                 newly_fetched_profiles.append(user_profile)
 
-            # Cache the newly fetched profiles
+            # Cache the newly fetched profiles with R2 direct URLs
             if newly_fetched_profiles:
                 cache.set_batch(newly_fetched_profiles)
                 logger.debug(f"Cached {len(newly_fetched_profiles)} newly fetched profiles")
@@ -580,6 +611,11 @@ class UserProfileService:
             all_profiles = {**cached_profiles}
             for profile in newly_fetched_profiles:
                 all_profiles[profile["id"]] = profile
+
+            # Generate fresh signed URLs for all profiles (both cached and newly fetched)
+            for profile in all_profiles.values():
+                if profile.get("avatar_url"):
+                    profile["avatar_url"] = self._generate_signed_avatar_url(profile["avatar_url"])
 
             # Return in original order
             return [all_profiles[uid] for uid in user_ids if uid in all_profiles]
