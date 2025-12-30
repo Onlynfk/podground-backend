@@ -902,13 +902,39 @@ class UserListeningService:
                     # The podcast already exists in main table, just return True
                     return True
                 
+                # Get publisher - try to get from claim owner if not available
+                publisher = featured_podcast['publisher']
+                if not publisher:
+                    try:
+                        # Check if podcast is claimed
+                        claim_result = self.supabase.table('podcast_claims') \
+                            .select('user_id') \
+                            .eq('listennotes_id', featured_podcast['podcast_id']) \
+                            .eq('is_verified', True) \
+                            .eq('claim_status', 'verified') \
+                            .execute()
+
+                        if claim_result.data and len(claim_result.data) > 0:
+                            user_id = claim_result.data[0]['user_id']
+                            from user_profile_service import UserProfileService
+                            profile_service = UserProfileService()
+                            owner_profile = await profile_service.get_user_profile(user_id)
+                            if owner_profile and owner_profile.get('name'):
+                                publisher = owner_profile['name']
+                    except Exception as e:
+                        logger.warning(f"Could not get owner name for publisher: {e}")
+
+                    # If still no publisher, use empty string
+                    if not publisher:
+                        publisher = ''
+
                 # Import from featured_podcasts to main podcasts table
                 podcast_record = {
                     'id': featured_podcast['id'],  # Use the same UUID
                     'listennotes_id': featured_podcast['podcast_id'],  # ListenNotes ID
                     'title': featured_podcast['title'],
                     'description': featured_podcast['description'] or '',
-                    'publisher': featured_podcast['publisher'] or 'Unknown Publisher',
+                    'publisher': publisher,
                     'language': 'en',  # Default
                     'image_url': featured_podcast['image_url'] or '',
                     'thumbnail_url': featured_podcast['image_url'] or '',
@@ -979,12 +1005,38 @@ class UserListeningService:
             if featured_by_ln_id.data:
                 logger.info(f"Found podcast by listennotes_id in featured_podcasts: {podcast_id}, importing to main table")
                 featured_podcast = featured_by_ln_id.data[0]
-                
+
+                # Get publisher - try to get from claim owner if not available
+                publisher = featured_podcast['publisher']
+                if not publisher:
+                    try:
+                        # Check if podcast is claimed
+                        claim_result = self.supabase.table('podcast_claims') \
+                            .select('user_id') \
+                            .eq('listennotes_id', featured_podcast['podcast_id']) \
+                            .eq('is_verified', True) \
+                            .eq('claim_status', 'verified') \
+                            .execute()
+
+                        if claim_result.data and len(claim_result.data) > 0:
+                            user_id = claim_result.data[0]['user_id']
+                            from user_profile_service import UserProfileService
+                            profile_service = UserProfileService()
+                            owner_profile = await profile_service.get_user_profile(user_id)
+                            if owner_profile and owner_profile.get('name'):
+                                publisher = owner_profile['name']
+                    except Exception as e:
+                        logger.warning(f"Could not get owner name for publisher: {e}")
+
+                    # If still no publisher, use empty string
+                    if not publisher:
+                        publisher = ''
+
                 podcast_record = {
                     'listennotes_id': featured_podcast['podcast_id'],
                     'title': featured_podcast['title'],
                     'description': featured_podcast['description'] or '',
-                    'publisher': featured_podcast['publisher'] or 'Unknown Publisher',
+                    'publisher': publisher,
                     'language': 'en',
                     'image_url': featured_podcast['image_url'] or '',
                     'thumbnail_url': featured_podcast['image_url'] or '',

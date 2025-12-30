@@ -2470,7 +2470,7 @@ class SupabaseClient:
     def _sync_onboarding_to_profile(self, user_id: str) -> Dict:
         """
         Sync onboarding data to user_profiles table when onboarding completes.
-        This ensures location and other onboarding data is available in the profile.
+        This ensures location and name data is available in the profile.
         """
         try:
             # Get onboarding data
@@ -2515,10 +2515,25 @@ class SupabaseClient:
                         f"Could not fetch location for id {location_id}: {e}"
                     )
 
+            # Get user's name from auth.users metadata
+            first_name = None
+            last_name = None
+            try:
+                user_data = self.service_client.auth.admin.get_user_by_id(user_id)
+                if user_data and hasattr(user_data, 'user') and user_data.user.user_metadata:
+                    first_name = user_data.user.user_metadata.get('first_name')
+                    last_name = user_data.user.user_metadata.get('last_name')
+            except Exception as e:
+                logger.warning(f"Could not fetch user metadata for {user_id}: {e}")
+
             # Prepare update data
             profile_update = {}
             if location_string:
                 profile_update["location"] = location_string
+            if first_name:
+                profile_update["first_name"] = first_name
+            if last_name:
+                profile_update["last_name"] = last_name
 
             # Only update if there's data to update
             if not profile_update:
@@ -2911,12 +2926,27 @@ class SupabaseClient:
                 logger.warning(
                     f"Could not fetch full data from ListenNotes: {ln_error}, using minimal data"
                 )
+
+                # Get owner's name for publisher
+                owner_name = None
+                try:
+                    user_id = claim.get("user_id")
+                    if user_id:
+                        from user_profile_service import UserProfileService
+                        profile_service = UserProfileService()
+                        import asyncio
+                        owner_profile = asyncio.run(profile_service.get_user_profile(user_id))
+                        if owner_profile and owner_profile.get("name"):
+                            owner_name = owner_profile["name"]
+                except Exception as name_error:
+                    logger.warning(f"Could not get owner name: {name_error}")
+
                 # Fallback to minimal data from claim
                 insert_data = {
                     "listennotes_id": listennotes_id,
                     "title": podcast_title,
-                    "description": f"Claimed podcast: {podcast_title}",
-                    "publisher": "Unknown Publisher",
+                    "description": "",
+                    "publisher": owner_name or "",  # Empty string if no owner name
                     "language": "en",
                     "image_url": "",
                     "thumbnail_url": "",

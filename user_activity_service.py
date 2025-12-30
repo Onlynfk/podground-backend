@@ -139,10 +139,12 @@ class UserActivityService:
                 "post_saved",
                 "comment_created",
                 "comment_liked",
-                "connection_accepted",
                 "podcast_followed",
                 "podcast_saved",
-                "episode_listened"
+                "episode_listened",
+                "article_opened",
+                "guide_downloaded",
+                "video_watched"
             ]
             query = query.in_("activity_type", feed_activity_types)
 
@@ -236,20 +238,15 @@ class UserActivityService:
             comment_ids = set()
             podcast_ids = set()
             episode_ids = set()
+            resource_ids = set()
 
             # Pre-scan activities to collect all IDs
             for activity in activities:
                 activity_type = activity.get("activity_type")
                 activity_data = activity.get("activity_data", {})
 
-                # For connection activities, add the connected user
-                if activity_type == "connection_accepted":
-                    connected_user_id = activity_data.get("connected_user_id")
-                    if connected_user_id:
-                        user_ids.add(connected_user_id)
-
                 # Collect post IDs
-                elif activity_type in ["post_created", "post_liked", "post_saved"]:
+                if activity_type in ["post_created", "post_liked", "post_saved"]:
                     post_id = activity_data.get("post_id")
                     if post_id:
                         post_ids.add(post_id)
@@ -274,6 +271,12 @@ class UserActivityService:
                         episode_ids.add(episode_id)
                     if podcast_id:
                         podcast_ids.add(podcast_id)
+
+                # Collect resource IDs
+                elif activity_type in ["article_opened", "guide_downloaded", "video_watched"]:
+                    resource_id = activity_data.get("resource_id")
+                    if resource_id:
+                        resource_ids.add(resource_id)
 
             # Batch fetch all user profiles
             from user_profile_service import UserProfileService
@@ -391,6 +394,15 @@ class UserActivityService:
                         if p["id"] not in podcasts_map:
                             podcasts_map[p["id"]] = p
 
+            # Batch fetch all resources
+            resources_map = {}
+            if resource_ids:
+                resources_result = self.supabase_client.service_client.table("resources").select(
+                    "id, title, type, author, image_url, thumbnail_url"
+                ).in_("id", list(resource_ids)).execute()
+                if resources_result.data:
+                    resources_map = {r["id"]: r for r in resources_result.data}
+
             # Now enrich each activity using the pre-fetched data
             enriched = []
             for activity in activities:
@@ -410,7 +422,8 @@ class UserActivityService:
                     post_media_map,
                     comments_map,
                     podcasts_map,
-                    episodes_map
+                    episodes_map,
+                    resources_map
                 )
 
                 enriched.append(enriched_activity)
@@ -483,17 +496,6 @@ class UserActivityService:
                             if post_result.data:
                                 activity["post"] = post_result.data
 
-            # Connection activities
-            elif activity_type == "connection_accepted":
-                connected_user_id = activity_data.get("connected_user_id")
-                if connected_user_id and connected_user_id in profiles_map:
-                    # Use pre-fetched profile from profiles_map
-                    connected_user = profiles_map[connected_user_id]
-                    activity["connected_user"] = connected_user
-                    # Use connected user's avatar as image
-                    if connected_user.get("avatar_url"):
-                        activity["image_url"] = connected_user["avatar_url"]
-
             # Podcast-related activities
             elif activity_type in ["podcast_followed", "podcast_saved"]:
                 podcast_id = activity_data.get("podcast_id")
@@ -538,6 +540,22 @@ class UserActivityService:
                         elif podcast_result.data.get("image_url"):
                             activity["image_url"] = podcast_result.data["image_url"]
 
+            # Resource interaction activities
+            elif activity_type in ["article_opened", "guide_downloaded", "video_watched"]:
+                resource_id = activity_data.get("resource_id")
+                if resource_id:
+                    resource_result = self.supabase_client.service_client.table("resources").select(
+                        "id, title, type, author, image_url, thumbnail_url"
+                    ).eq("id", resource_id).single().execute()
+
+                    if resource_result.data:
+                        activity["resource"] = resource_result.data
+                        # Use thumbnail_url or image_url for display
+                        if resource_result.data.get("thumbnail_url"):
+                            activity["image_url"] = resource_result.data["thumbnail_url"]
+                        elif resource_result.data.get("image_url"):
+                            activity["image_url"] = resource_result.data["image_url"]
+
         except Exception as e:
             logger.warning(f"Failed to enrich activity by type: {str(e)}")
 
@@ -551,7 +569,8 @@ class UserActivityService:
         post_media_map: Dict[str, str],
         comments_map: Dict[str, Dict[str, Any]],
         podcasts_map: Dict[str, Dict[str, Any]],
-        episodes_map: Dict[str, Dict[str, Any]]
+        episodes_map: Dict[str, Dict[str, Any]],
+        resources_map: Dict[str, Dict[str, Any]]
     ) -> Dict[str, Any]:
         """Add type-specific enrichment to activity using pre-fetched batch data"""
         try:
@@ -588,19 +607,6 @@ class UserActivityService:
                         else:
                             activity["image_url"] = None
 
-            # Connection activities
-            elif activity_type == "connection_accepted":
-                connected_user_id = activity_data.get("connected_user_id")
-                if connected_user_id and connected_user_id in profiles_map:
-                    # Use pre-fetched profile from profiles_map
-                    connected_user = profiles_map[connected_user_id]
-                    activity["connected_user"] = connected_user
-                    # Only use connected user's avatar if available
-                    if connected_user.get("avatar_url"):
-                        activity["image_url"] = connected_user["avatar_url"]
-                    else:
-                        activity["image_url"] = None
-
             # Podcast-related activities
             elif activity_type in ["podcast_followed", "podcast_saved"]:
                 podcast_id = activity_data.get("podcast_id")
@@ -631,6 +637,20 @@ class UserActivityService:
                         activity["image_url"] = episode_image_url
                     elif podcasts_map[podcast_id].get("image_url"):
                         activity["image_url"] = podcasts_map[podcast_id]["image_url"]
+                    else:
+                        activity["image_url"] = None
+
+            # Resource interaction activities
+            elif activity_type in ["article_opened", "guide_downloaded", "video_watched"]:
+                resource_id = activity_data.get("resource_id")
+                if resource_id and resource_id in resources_map:
+                    activity["resource"] = resources_map[resource_id]
+                    # Use thumbnail_url or image_url for display
+                    resource = resources_map[resource_id]
+                    if resource.get("thumbnail_url"):
+                        activity["image_url"] = resource["thumbnail_url"]
+                    elif resource.get("image_url"):
+                        activity["image_url"] = resource["image_url"]
                     else:
                         activity["image_url"] = None
 

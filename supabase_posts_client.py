@@ -589,8 +589,6 @@ class SupabasePostsClient:
                         "is_liked": post["id"] in liked_posts,
                         "is_saved": post["id"] in saved_posts,
                         "is_shared": False,
-                        "mentions": [],
-                        "hashtags": [],
                         "category": post.get("post_categories")
                     }
                     
@@ -636,9 +634,7 @@ class SupabasePostsClient:
             # Build query - get all posts with category information
             query = self.client.service_client.table("posts").select(
                 "*, post_media(*), post_categories(id, name, display_name, color)"
-            ).is_("deleted_at", None).order(
-                "created_at", desc=True
-            ).limit(limit)
+            ).is_("deleted_at", None).order("is_pinned", desc=True).order("created_at", desc=True).limit(limit)
 
             # Apply pagination - cursor takes precedence over offset
             if cursor:
@@ -759,8 +755,6 @@ class SupabasePostsClient:
                             "is_liked": post["id"] in liked_posts,
                             "is_saved": post["id"] in saved_posts,
                             "is_shared": False,
-                            "mentions": [],
-                            "hashtags": [],
                             "category": post.get("post_categories")
                         }
 
@@ -819,8 +813,6 @@ class SupabasePostsClient:
                                 "is_liked": False,
                                 "is_saved": False,
                                 "is_shared": False,
-                                "mentions": [],
-                                "hashtags": [],
                                 "category": None
                             }
                             formatted_posts.append(fallback_post)
@@ -861,34 +853,96 @@ class SupabasePostsClient:
             return {"success": False, "error": str(e)}
     
     def update_post(self, post_id: str, user_id: str, update_data: Dict) -> Dict:
-        """Update a post"""
+        """Update a post with full control over content and media
+
+        Supports:
+        - Update text content (including clearing with empty string)
+        - Keep specific media items (via keep_media_ids)
+        - Add new media items
+
+        Media handling logic:
+        - If keep_media_ids not provided: existing media unchanged
+        - If keep_media_ids provided: delete media not in the list
+        - New media_items always added
+        """
         try:
             # Verify ownership
             post_check = self.client.service_client.table("posts").select("user_id").eq(
                 "id", post_id
             ).single().execute()
-            
+
             if not post_check.data or post_check.data["user_id"] != user_id:
                 return {"success": False, "error": "Unauthorized"}
-            
-            # Update post
+
+            # Update post fields (content, post_type, etc.)
             update_fields = {
                 "updated_at": datetime.utcnow().isoformat()
             }
-            
+
             if "content" in update_data:
                 update_fields["content"] = update_data["content"]
-            
+
+            if "post_type" in update_data:
+                update_fields["post_type"] = update_data["post_type"]
+
+            if "podcast_episode_url" in update_data:
+                update_fields["podcast_episode_url"] = update_data["podcast_episode_url"]
+
             result = self.client.service_client.table("posts").update(
                 update_fields
             ).eq("id", post_id).execute()
+
+            # Handle media operations
+            if "keep_media_ids" in update_data:
+                keep_media_ids = update_data["keep_media_ids"]
+
+                # Get all current media for this post
+                current_media_result = self.client.service_client.table("post_media").select("id").eq(
+                    "post_id", post_id
+                ).execute()
+
+                if current_media_result.data:
+                    current_media_ids = [media["id"] for media in current_media_result.data]
+
+                    # Calculate which media to delete (current media NOT in keep list)
+                    media_ids_to_delete = [mid for mid in current_media_ids if mid not in keep_media_ids]
+
+                    # Delete media not in keep list
+                    if media_ids_to_delete:
+                        try:
+                            self.client.service_client.table("post_media").delete().in_(
+                                "id", media_ids_to_delete
+                            ).eq("post_id", post_id).execute()
+                            logger.info(f"Deleted {len(media_ids_to_delete)} media items from post {post_id}")
+                        except Exception as e:
+                            logger.error(f"Failed to delete media from post {post_id}: {str(e)}")
+
+            # Add new media items if provided
+            if "media_items" in update_data and update_data["media_items"]:
+                media_items = update_data["media_items"]
+
+                for media_item in media_items:
+                    try:
+                        self.client.service_client.table("post_media").insert({
+                            "post_id": post_id,
+                            "url": media_item.get("url"),
+                            "storage_path": media_item.get("storage_path"),
+                            "type": media_item.get("type", "image"),
+                            "thumbnail_url": media_item.get("thumbnail_url"),
+                            "duration": media_item.get("duration"),
+                            "width": media_item.get("width"),
+                            "height": media_item.get("height")
+                        }).execute()
+                        logger.info(f"Added media to post {post_id}: {media_item.get('url')}")
+                    except Exception as e:
+                        logger.error(f"Failed to add media to post {post_id}: {str(e)}")
 
             # Invalidate feed cache (application-level)
             self.feed_cache.invalidate_via_database()
             logger.info(f"Feed cache invalidated after post update: {post_id}")
 
             return {"success": True, "data": result.data[0] if result.data else None}
-            
+
         except Exception as e:
             logger.error(f"Update post error: {str(e)}")
             return {"success": False, "error": str(e)}
@@ -1007,6 +1061,30 @@ class SupabasePostsClient:
                     asyncio.create_task(activity_service.log_activity(user_id, "comment_created", {"comment_id": comment_id, "post_id": post_id}))
                 except Exception as e:
                     logger.warning(f"Failed to log comment_created activity: {str(e)}")
+
+                # Send email notification for post owner (background task)
+                try:
+                    import asyncio
+                    from background_tasks import send_activity_notification_email
+                    from email_notification_service import NOTIFICATION_TYPE_POST_REPLY
+
+                    # Get post owner
+                    post_result = self.client.service_client.table("posts").select("user_id").eq("id", post_id).single().execute()
+
+                    if post_result.data:
+                        post_owner_id = post_result.data["user_id"]
+
+                        # Don't notify if user is commenting on their own post
+                        if post_owner_id != user_id:
+                            # Send email immediately as background task (non-blocking)
+                            asyncio.create_task(send_activity_notification_email(
+                                user_id=post_owner_id,
+                                notification_type=NOTIFICATION_TYPE_POST_REPLY,
+                                actor_id=user_id,
+                                resource_id=post_id
+                            ))
+                except Exception as e:
+                    logger.warning(f"Failed to send post reply notification: {str(e)}")
 
                 # Invalidate feed cache (application-level)
                 self.feed_cache.invalidate_via_database()
@@ -1911,8 +1989,6 @@ class SupabasePostsClient:
                             "is_liked": post["id"] in liked_posts,
                             "is_saved": True,  # Always true for saved posts
                             "is_shared": False,
-                            "mentions": [],
-                            "hashtags": [],
                             "saved_at": saved_dates.get(post["id"]),  # When the user saved this post
                             "category": post.get("post_categories")
                         }
@@ -2121,10 +2197,7 @@ class SupabasePostsClient:
                     },
                     "is_liked": post["id"] in liked_posts,
                     "is_saved": post["id"] in saved_posts,
-                    "is_shared": False,  # TODO: Check if user shared
-                    "mentions": [],  # TODO: Extract mentions
-                    "hashtags": [],  # TODO: Extract hashtags
-                    "poll_options": None,  # TODO: Handle polls if needed
+                    "is_shared": False,
                     "category": post.get("post_categories")
                 }
                 

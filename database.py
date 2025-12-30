@@ -1,6 +1,6 @@
 import uuid
 import json
-from sqlalchemy.dialects.postgresql import ENUM, ARRAY
+from sqlalchemy.dialects.postgresql import ENUM, ARRAY, UUID as PostgreSQL_UUID
 from sqlalchemy import (
     create_engine,
     Column,
@@ -9,10 +9,10 @@ from sqlalchemy import (
     DateTime,
     Boolean,
     ForeignKey,
-    UUID,
     Text,
 )
-from sqlalchemy.types import TypeDecorator
+from sqlalchemy.types import TypeDecorator, CHAR
+from sqlalchemy.dialects.postgresql import UUID as PostgreSQL_UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime, timezone
@@ -23,6 +23,40 @@ from post_models import PodcastExperience, HeardAbout, PodcastChallenge, YesNo
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./app.db")
+
+
+# Custom UUID type that works with both SQLite and PostgreSQL
+class GUID(TypeDecorator):
+    """Platform-independent GUID type.
+    Uses PostgreSQL's UUID type, otherwise uses CHAR(36), storing as stringified hex values.
+    """
+    impl = CHAR
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == 'postgresql':
+            return dialect.type_descriptor(PostgreSQL_UUID())
+        else:
+            return dialect.type_descriptor(CHAR(36))
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return value
+        elif dialect.name == 'postgresql':
+            return str(value)
+        else:
+            if not isinstance(value, uuid.UUID):
+                return str(uuid.UUID(value))
+            else:
+                return str(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return value
+        else:
+            if not isinstance(value, uuid.UUID):
+                value = uuid.UUID(value)
+            return value
 
 engine = create_engine(
     DATABASE_URL,
@@ -133,7 +167,7 @@ class UserOnboardingCategories(Base):
 class GrantApplications(Base):
     __tablename__ = "grant_applications"
 
-    id = Column(UUID, primary_key=True, default=lambda: uuid.uuid4())
+    id = Column(GUID, primary_key=True, default=lambda: uuid.uuid4())
     name = Column(String, nullable=False)
     email = Column(String, unique=True, nullable=False)
     podcast_title = Column(String, nullable=False, unique=True)
