@@ -112,6 +112,9 @@ from models import (
     TopicsResponse,
     ResourcesResponse,
     EventsResponse,
+    # Blog post models
+    BlogResponse,
+    BlogsResponse,
     # Subscription models
     SubscriptionPlansResponse,
     UserSubscriptionResponse,
@@ -4782,7 +4785,6 @@ async def get_trending_topics(request: Request, limit: int = 20):
 
 
 # Resources Endpoints
-
 @app.get(
     "/api/v1/resources/blogs",
     response_model=BlogsResponse,
@@ -4806,6 +4808,7 @@ async def get_all_blog_posts(
     except Exception as e:
         logger.error(f"Failed to get blog posts: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve blog posts")
+
 
 @app.get("/api/v1/resources", response_model=ResourcesResponse, tags=["Resources"])
 @limiter.limit("20/minute")
