@@ -32,6 +32,8 @@ from fastapi.responses import (
     RedirectResponse,
     Response,
 )
+import django
+from fastadmin import fastapi_app as admin_app
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy.orm import Session
@@ -113,6 +115,9 @@ from models import (
     TopicsResponse,
     ResourcesResponse,
     EventsResponse,
+    # Blog post models
+    BlogResponse,
+    BlogsResponse,
     # Subscription models
     SubscriptionPlansResponse,
     UserSubscriptionResponse,
@@ -157,7 +162,6 @@ from models import (
     BaseModel,
     BlogResponse,
     BlogsResponse,
-    ResourceCategoryResponse,
 )
 from post_models import (
     CreateResourceRequest,
@@ -205,6 +209,9 @@ from feed_cache_service import get_feed_cache_service
 from user_settings_service import get_user_settings_service
 from notification_service import NotificationService, notification_manager
 from resource_interaction_service import get_resource_interaction_service
+import os
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "admin.settings")
+django.setup()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -4786,24 +4793,10 @@ async def get_trending_topics(request: Request, limit: int = 20):
 
 
 # Resources Endpoints
-
-@app.get("/api/v1/blogs/categories/all", response_model=List[ResourceCategoryResponse], tags=["Blogs"])
-@limiter.limit("60/minute")
-async def get_all_blog_categories(request: Request):
-    """
-    Get all available blog categories.
-    """
-    try:
-        categories_data = await resources_service.get_resource_categories()
-        return categories_data
-    except Exception as e:
-        logger.error(f"Failed to get blog categories: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to retrieve blog categories")
-
 @app.get(
     "/api/v1/resources/blogs",
     response_model=BlogsResponse,
-    tags=["Blogs"],
+    tags=["Resources"],
     summary="Get all blog posts",
 )
 async def get_all_blog_posts(
@@ -4823,30 +4816,6 @@ async def get_all_blog_posts(
     except Exception as e:
         logger.error(f"Failed to get blog posts: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve blog posts")
-
-
-@app.get(
-    "/api/v1/resources/blogs/category/{category_id}",
-    response_model=BlogsResponse,
-    tags=["Blogs"],
-    summary="Get blog posts by category",
-)
-async def get_blogs_by_category(
-    category_id: UUID, limit: int = 20, offset: int = 0
-):
-    """
-    Get blog posts by category
-    Public endpoint, no authentication required.
-    """
-    try:
-        result = await resources_service.get_blog_posts_by_category(
-            category_id=str(category_id), limit=limit, offset=offset
-        )
-        return result
-    except Exception as e:
-        logger.error(f"Error getting blogs by category: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to get blog posts")
-
 
 
 @app.get("/api/v1/resources", response_model=ResourcesResponse, tags=["Resources"])
@@ -9122,6 +9091,7 @@ async def create_grant_application(
 #         logger.error(f"Manual podcast categorization error: {str(e)}")
 #         raise HTTPException(status_code=500, detail=f"Categorization failed: {str(e)}")
 
+app.mount("/admin", admin_app)
 
 if __name__ == "__main__":
     import uvicorn
