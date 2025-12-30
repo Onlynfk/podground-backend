@@ -298,7 +298,7 @@ async def sync_failed_waitlist_entries() -> Dict:
         errors = []
         
         # Process regular waitlist entries
-        waitlist_result = supabase_client.get_unsynced_waitlist_entries("waitlist_emails", retry_limit=1000)
+        waitlist_result = supabase_client.get_unsynced_waitlist_entries("waitlist_emails", retry_limit=5)
         
         if waitlist_result["success"]:
             waitlist_entries = waitlist_result.get("data", [])
@@ -334,7 +334,7 @@ async def sync_failed_waitlist_entries() -> Dict:
                     logger.error(error_msg)
         
         # Process microgrant waitlist entries
-        microgrant_result = supabase_client.get_unsynced_waitlist_entries("microgrant_waitlist_emails", retry_limit=1000)
+        microgrant_result = supabase_client.get_unsynced_waitlist_entries("microgrant_waitlist_emails", retry_limit=5)
         
         if microgrant_result["success"]:
             microgrant_entries = microgrant_result.get("data", [])
@@ -641,3 +641,46 @@ async def refresh_stale_podcast_episodes() -> Dict:
     except Exception as e:
         logger.error(f"Stale podcast cache refresh error: {str(e)}")
         return {"success": False, "error": str(e), "processed": 0, "refreshed": 0, "skipped": 0, "failed": 0}
+
+async def send_activity_notification_email(
+    user_id: str,
+    notification_type: str,
+    actor_id: str = None,
+    resource_id: str = None,
+    metadata: dict = None
+):
+    """
+    Send activity notification email immediately (as background task)
+    This is called asynchronously to avoid blocking the main thread
+
+    Args:
+        user_id: User who will receive the notification
+        notification_type: Type of notification (post_reply, post_reaction, etc.)
+        actor_id: User who triggered the notification (optional)
+        resource_id: ID of the post, message, podcast, etc. (optional)
+        metadata: Additional data (optional)
+    """
+    try:
+        from email_notification_service import get_email_notification_service
+
+        service = get_email_notification_service()
+        result = await service.send_notification_email(
+            user_id=user_id,
+            notification_type=notification_type,
+            actor_id=actor_id,
+            resource_id=resource_id,
+            metadata=metadata
+        )
+
+        if result.get("success"):
+            logger.info(f"✅ Sent {notification_type} email to user {user_id[:8]}...")
+        elif result.get("limit_reached"):
+            logger.info(f"⏸️  Daily limit reached for user {user_id[:8]}... - skipped {notification_type} email")
+        else:
+            logger.warning(f"❌ Failed to send {notification_type} email: {result.get('error')}")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error sending activity notification email: {str(e)}", exc_info=True)
+        return {"success": False, "error": str(e)}

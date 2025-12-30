@@ -106,7 +106,9 @@ class CreatePostRequest(BaseModel):
 
 class UpdatePostRequest(BaseModel):
     content: Optional[str] = Field(None, max_length=5000)
+    post_type: Optional[str] = None
     media_urls: Optional[List[str]] = None
+    podcast_episode_url: Optional[str] = None
     mentions: Optional[List[str]] = None
     hashtags: Optional[List[str]] = None
 
@@ -165,13 +167,7 @@ class PostResponse(BaseModel):
     is_liked: bool = False
     is_saved: bool = False
     is_shared: bool = False
-
-    # Additional metadata
-    mentions: List[UserProfileResponse] = []
-    hashtags: List[str] = []
-    poll_options: Optional[List[Dict[str, Any]]] = (
-        None  # {option: str, votes: int, percentage: float, voted: bool}
-    )
+    is_pinned: bool = False
 
     # Post category (AI-assigned)
     category: Optional[Dict[str, str]] = (

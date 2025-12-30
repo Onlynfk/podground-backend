@@ -219,12 +219,20 @@ class ResourcesService:
                                 )
 
                     if resource_data.get("user_has_access", False):
-                        for field in (
-                            "image_url",
-                            "thumbnail_url",
-                            "url",
-                            "download_url",
-                        ):
+                        if resource.get("type") == "video":
+                            fields_to_sign = (
+                                "image_url",
+                                "thumbnail_url",
+                                "download_url",
+                            )
+                        else:
+                            fields_to_sign = (
+                                "image_url",
+                                "thumbnail_url",
+                                "url",
+                                "download_url",
+                            )
+                        for field in fields_to_sign:
                             val = resource_data.get(field)
                             if val:
                                 resource_data[field] = (
@@ -396,11 +404,18 @@ class ResourcesService:
                             )
 
                 if resource.get("user_has_access", False):
-                    for field in (
-                        "image_url",
-                        "thumbnail_url",
-                        "url",
-                    ):
+                    if resource.get("type") == "video":
+                        fields_to_sign = (
+                            "image_url",
+                            "thumbnail_url",
+                        )
+                    else:
+                        fields_to_sign = (
+                            "image_url",
+                            "thumbnail_url",
+                            "url",
+                        )
+                    for field in fields_to_sign:
                         val = resource.get(field)
                         if val:
                             resource[field] = (
