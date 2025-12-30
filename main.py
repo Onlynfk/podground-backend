@@ -114,6 +114,9 @@ from models import (
     TopicsResponse,
     ResourcesResponse,
     EventsResponse,
+    # Blog post models
+    BlogResponse,
+    BlogsResponse,
     # Subscription models
     SubscriptionPlansResponse,
     UserSubscriptionResponse,
@@ -147,6 +150,8 @@ from models import (
     GlobalSearchResponse,
     # Base model for new request classes
     BaseModel,
+    BlogResponse,
+    BlogsResponse,
 )
 from post_models import (
     CreateResourceRequest,
@@ -4558,6 +4563,31 @@ async def get_trending_topics(request: Request, limit: int = 20):
 
 
 # Resources Endpoints
+@app.get(
+    "/api/v1/resources/blogs",
+    response_model=BlogsResponse,
+    tags=["Resources"],
+    summary="Get all blog posts",
+)
+async def get_all_blog_posts(
+    limit: int = 20,
+    offset: int = 0,
+):
+    """
+    Get all resources that are marked as blog posts.
+    This is a public endpoint and does not require authentication.
+    """
+    try:
+        # Service method to get blogs
+        result = await resources_service.get_blog_posts(
+            limit=limit, offset=offset
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Failed to get blog posts: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve blog posts")
+
+
 @app.get("/api/v1/resources", response_model=ResourcesResponse, tags=["Resources"])
 @limiter.limit("20/minute")
 async def get_resources(

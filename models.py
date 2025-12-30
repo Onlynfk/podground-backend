@@ -413,3 +413,17 @@ class GlobalSearchResponse(BaseModel):
     total_results: int
     results: Dict[str, List[Dict[str, Any]]]
     cached: bool
+
+
+class BlogResponse(BaseModel):
+    id: str
+    slug: str
+    title: str
+    summary: Optional[str] = None
+    content: Optional[str] = None
+
+
+class BlogsResponse(BaseModel):
+    blogs: List[BlogResponse]
+    total_count: int
+    has_more: bool

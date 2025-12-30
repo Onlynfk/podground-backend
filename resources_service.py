@@ -246,6 +246,53 @@ class ResourcesService:
             logger.error(f"Error getting resources: {str(e)}")
             raise Exception("Failed to get resources")
 
+    async def get_blog_posts(
+        self, limit: int = 20, offset: int = 0
+    ) -> Dict[str, Any]:
+        """
+        Get blog posts (resources where is_blog=True)
+        This endpoint is public and does not require authentication.
+        """
+        try:
+            query = (
+                self.supabase.table("resources")
+                .select("*")
+                .eq("is_blog", True)
+                .eq("type", "article")
+                .order("created_at", desc=True)
+                .range(offset, offset + limit - 1)
+            )
+
+            response = query.execute()
+
+            if response.data:
+                blogs = []
+                for resource in response.data:
+                    content = await article_content_service.get_article_content(
+                        resource["id"]
+                    )
+                    blogs.append(
+                        {
+                            "id": resource["id"],
+                            "slug": resource["id"],
+                            "title": resource["title"],
+                            "summary": resource.get("description"),
+                            "content": content,
+                        }
+                    )
+
+                return {
+                    "blogs": blogs,
+                    "total_count": len(blogs),
+                    "has_more": len(blogs) == limit,
+                }
+
+            return {"blogs": [], "total_count": 0, "has_more": False}
+
+        except Exception as e:
+            logger.error(f"Error getting blog posts: {str(e)}")
+            raise Exception("Failed to get blog posts")
+
     async def get_resource_by_id(
         self, user_id: str, resource_id: str
     ) -> Optional[Dict[str, Any]]:
