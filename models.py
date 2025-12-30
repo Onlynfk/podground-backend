@@ -459,3 +459,17 @@ class RecordEpisodeListenResponse(BaseModel):
     success: bool
     is_first_listen: bool
     error: Optional[str] = None
+
+
+class BlogResponse(BaseModel):
+    id: str
+    slug: str
+    title: str
+    summary: Optional[str] = None
+    content: Optional[str] = None
+
+
+class BlogsResponse(BaseModel):
+    blogs: List[BlogResponse]
+    total_count: int
+    has_more: bool

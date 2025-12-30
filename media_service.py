@@ -439,7 +439,7 @@ class MediaService:
             bucket: Optional bucket name (defaults to self.r2_bucket)
 
         Returns:
-            Signed URL string
+            Signed URL string (or public URL if R2_PUBLIC_URL is configured)
 
         Note: This is a synchronous method because generate_presigned_url is not I/O bound
         """
