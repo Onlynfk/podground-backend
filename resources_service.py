@@ -276,8 +276,10 @@ class ResourcesService:
             if response.data:
                 blogs = []
                 for resource in response.data:
-                    content = await article_content_service.get_article_content(
-                        resource["id"]
+                    content = (
+                        await article_content_service.get_article_content(
+                            resource["id"]
+                        )
                     )
                     blogs.append(
                         {
@@ -286,6 +288,8 @@ class ResourcesService:
                             "title": resource["title"],
                             "summary": resource.get("description"),
                             "content": content,
+                            "created_at": resource.get("created_at"),
+                            "author": "Podground Team",
                         }
                     )
 
@@ -883,3 +887,4 @@ class ResourcesService:
 
 
 resources_service = ResourcesService()
+

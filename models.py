@@ -421,6 +421,8 @@ class BlogResponse(BaseModel):
     title: str
     summary: Optional[str] = None
     content: Optional[str] = None
+    author: str
+    created_at: Optional[str] = None
 
 
 class BlogsResponse(BaseModel):
