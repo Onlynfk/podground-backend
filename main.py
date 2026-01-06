@@ -157,6 +157,7 @@ from models import (
     BaseModel,
     BlogResponse,
     BlogsResponse,
+    ResourceCategoryResponse,
 )
 from post_models import (
     CreateResourceRequest,
@@ -170,6 +171,7 @@ from customerio_client import CustomerIOClient
 from supabase_client import SupabaseClient, get_supabase_client
 from listennotes_client import ListenNotesClient
 from podcast_endpoints import router as podcast_router
+from post_endpoints import router as post_router
 from jwt_utils import get_user_email_from_token
 from security_utils import sanitize_for_log, sanitize_name, validate_search_query
 from security_middleware import (
@@ -536,6 +538,7 @@ init_access_control(supabase_client)
 
 # Include routers
 app.include_router(podcast_router, prefix="/api/v1/podcasts", tags=["Podcasts"])
+app.include_router(post_router, prefix="/api/v1/posts", tags=["Posts"])
 
 
 def split_name(full_name: str) -> tuple[str, str]:
@@ -4784,10 +4787,23 @@ async def get_trending_topics(request: Request, limit: int = 20):
 
 # Resources Endpoints
 
+@app.get("/api/v1/blogs/categories/all", response_model=List[ResourceCategoryResponse], tags=["Blogs"])
+@limiter.limit("60/minute")
+async def get_all_blog_categories(request: Request):
+    """
+    Get all available blog categories.
+    """
+    try:
+        categories_data = await resources_service.get_resource_categories()
+        return categories_data
+    except Exception as e:
+        logger.error(f"Failed to get blog categories: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve blog categories")
+
 @app.get(
     "/api/v1/resources/blogs",
     response_model=BlogsResponse,
-    tags=["Resources"],
+    tags=["Blogs"],
     summary="Get all blog posts",
 )
 async def get_all_blog_posts(
@@ -4812,7 +4828,7 @@ async def get_all_blog_posts(
 @app.get(
     "/api/v1/resources/blogs/category/{category_id}",
     response_model=BlogsResponse,
-    tags=["Resources"],
+    tags=["Blogs"],
     summary="Get blog posts by category",
 )
 async def get_blogs_by_category(

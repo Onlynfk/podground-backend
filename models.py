@@ -415,10 +415,17 @@ class GlobalSearchResponse(BaseModel):
     cached: bool
 
 
-
 class BlogCategory(BaseModel):
     id: str
     name: str
+
+
+class ResourceCategoryResponse(BaseModel):
+    name: str
+    display_name: str
+    description: str
+
+
 # Stripe/Subscription Models
 class CreateCheckoutSessionRequest(BaseModel):
     plan: Literal["pro_monthly", "lifetime"]
@@ -444,7 +451,9 @@ class CreatePortalSessionResponse(BaseModel):
 class SubscriptionStatus(BaseModel):
     has_subscription: bool
     subscription_type: Optional[Literal["recurring", "lifetime"]] = None
-    status: Optional[str] = None  # active, canceled, past_due, lifetime_active, etc.
+    status: Optional[str] = (
+        None  # active, canceled, past_due, lifetime_active, etc.
+    )
     plan_id: Optional[str] = None
     current_period_end: Optional[datetime] = None
     cancel_at_period_end: Optional[bool] = None
@@ -474,7 +483,7 @@ class BlogResponse(BaseModel):
     author: str
     created_at: Optional[str] = None
     categories: List[BlogCategory] = []
-
+    image_url: str
 
 
 class BlogsResponse(BaseModel):
