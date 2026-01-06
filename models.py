@@ -451,9 +451,7 @@ class CreatePortalSessionResponse(BaseModel):
 class SubscriptionStatus(BaseModel):
     has_subscription: bool
     subscription_type: Optional[Literal["recurring", "lifetime"]] = None
-    status: Optional[str] = (
-        None  # active, canceled, past_due, lifetime_active, etc.
-    )
+    status: Optional[str] = None  # active, canceled, past_due, lifetime_active, etc.
     plan_id: Optional[str] = None
     current_period_end: Optional[datetime] = None
     cancel_at_period_end: Optional[bool] = None
