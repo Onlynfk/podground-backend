@@ -419,6 +419,51 @@ class GlobalSearchResponse(BaseModel):
 class BlogCategory(BaseModel):
     id: str
     name: str
+# Stripe/Subscription Models
+class CreateCheckoutSessionRequest(BaseModel):
+    plan: Literal["pro_monthly", "lifetime"]
+
+
+class CreateCheckoutSessionResponse(BaseModel):
+    success: bool
+    session_id: Optional[str] = None
+    url: Optional[str] = None
+    error: Optional[str] = None
+
+
+class CreatePortalSessionRequest(BaseModel):
+    return_url: Optional[str] = None
+
+
+class CreatePortalSessionResponse(BaseModel):
+    success: bool
+    url: Optional[str] = None
+    error: Optional[str] = None
+
+
+class SubscriptionStatus(BaseModel):
+    has_subscription: bool
+    subscription_type: Optional[Literal["recurring", "lifetime"]] = None
+    status: Optional[str] = None  # active, canceled, past_due, lifetime_active, etc.
+    plan_id: Optional[str] = None
+    current_period_end: Optional[datetime] = None
+    cancel_at_period_end: Optional[bool] = None
+    trial_end: Optional[datetime] = None
+    lifetime_access: Optional[bool] = None
+
+
+class SubscriptionStatusResponse(BaseModel):
+    success: bool
+    subscription: Optional[SubscriptionStatus] = None
+    error: Optional[str] = None
+
+
+# Episode Listen Models
+class RecordEpisodeListenResponse(BaseModel):
+    success: bool
+    is_first_listen: bool
+    error: Optional[str] = None
+
 
 class BlogResponse(BaseModel):
     id: str

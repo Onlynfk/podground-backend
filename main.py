@@ -113,9 +113,6 @@ from models import (
     TopicsResponse,
     ResourcesResponse,
     EventsResponse,
-    # Blog post models
-    BlogResponse,
-    BlogsResponse,
     # Subscription models
     SubscriptionPlansResponse,
     UserSubscriptionResponse,
@@ -4786,6 +4783,7 @@ async def get_trending_topics(request: Request, limit: int = 20):
 
 
 # Resources Endpoints
+
 @app.get(
     "/api/v1/resources/blogs",
     response_model=BlogsResponse,
