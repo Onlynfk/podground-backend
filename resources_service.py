@@ -911,4 +911,3 @@ class ResourcesService:
 
 
 resources_service = ResourcesService()
-
