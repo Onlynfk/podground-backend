@@ -415,6 +415,11 @@ class GlobalSearchResponse(BaseModel):
     cached: bool
 
 
+
+class BlogCategory(BaseModel):
+    id: str
+    name: str
+
 class BlogResponse(BaseModel):
     id: str
     slug: str
@@ -423,6 +428,8 @@ class BlogResponse(BaseModel):
     content: Optional[str] = None
     author: str
     created_at: Optional[str] = None
+    categories: List[BlogCategory] = []
+
 
 
 class BlogsResponse(BaseModel):
