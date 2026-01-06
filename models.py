@@ -415,6 +415,17 @@ class GlobalSearchResponse(BaseModel):
     cached: bool
 
 
+class BlogCategory(BaseModel):
+    id: str
+    name: str
+
+
+class ResourceCategoryResponse(BaseModel):
+    name: str
+    display_name: str
+    description: str
+
+
 # Stripe/Subscription Models
 class CreateCheckoutSessionRequest(BaseModel):
     plan: Literal["pro_monthly", "lifetime"]
@@ -467,6 +478,10 @@ class BlogResponse(BaseModel):
     title: str
     summary: Optional[str] = None
     content: Optional[str] = None
+    author: str
+    created_at: Optional[str] = None
+    categories: List[BlogCategory] = []
+    image_url: str
 
 
 class BlogsResponse(BaseModel):

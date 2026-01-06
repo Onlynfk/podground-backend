@@ -35,6 +35,8 @@ API will be available at `http://localhost:8000`
 - `GET /api/v1/token` - Generate JWT token for waitlist submission
 - `POST /api/v1/waitlist` - Submit email to waitlist (requires JWT token)
 - `POST /api/v1/microgrant-waitlist` - Submit email to microgrant waitlist (requires JWT token)
+- `GET /api/v1/resources/blogs` - Get all blog posts
+- `GET /api/v1/resources/blogs/category/{category_id}` - Get blog posts by category
 - `GET /api/v1/health` - Health check
 - `GET /api/v1/customerio-info` - Customer.io integration status (debug)
 - `GET /api/v1/debug/waitlist` - View recent waitlist entries (debug)
