@@ -415,18 +415,15 @@ class GlobalSearchResponse(BaseModel):
     cached: bool
 
 
-class BlogResponse(BaseModel):
+class BlogCategory(BaseModel):
     id: str
-    slug: str
-    title: str
-    summary: Optional[str] = None
-    content: Optional[str] = None
+    name: str
 
 
-class BlogsResponse(BaseModel):
-    blogs: List[BlogResponse]
-    total_count: int
-    has_more: bool
+class ResourceCategoryResponse(BaseModel):
+    name: str
+    display_name: str
+    description: str
 
 
 # Stripe/Subscription Models
@@ -492,3 +489,9 @@ class BlogResponse(BaseModel):
     created_at: Optional[str] = None
     categories: List[BlogCategory] = []
     image_url: str
+
+
+class BlogsResponse(BaseModel):
+    blogs: List[BlogResponse]
+    total_count: int
+    has_more: bool
