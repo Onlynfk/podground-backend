@@ -544,6 +544,13 @@ class ResourceAdmin(DjangoModelAdmin):
     )
 
     list_display_links = ("title",)
+    formfield_overrides = {
+        "image_url": (WidgetType.Upload, {"required": False})
+    }
+
+    def orm_save_upload_field(self, obj, field: str, base64: str) -> None:
+        print("error")
+        pass
 
 
 @register(Comment)
