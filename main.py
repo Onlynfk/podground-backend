@@ -4809,7 +4809,7 @@ async def get_all_blog_categories(request: Request):
         raise HTTPException(status_code=500, detail="Failed to retrieve blog categories")
 
 @app.get(
-    "/api/v1/resources/blogs",
+    "/api/v1/blogs/all",
     response_model=BlogsResponse,
     tags=["Blogs"],
     summary="Get all blog posts",
@@ -4828,6 +4828,20 @@ async def get_all_blog_posts(
             limit=limit, offset=offset
         )
         return result
+    except Exception as e:
+        logger.error(f"Failed to get blog posts: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve blog posts")
+
+
+@app.get(
+    "/api/v1/blog/{blog_id}",
+    tags=["Blogs"],
+    summary="Get single blog post",
+    response_model=BlogResponse
+)
+async def get_single_blog_post(blog_id:str)-> Dict[str, Any]:
+    try:
+        return await resources_service.get_blog(blog_id)
     except Exception as e:
         logger.error(f"Failed to get blog posts: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve blog posts")

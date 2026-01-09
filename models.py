@@ -474,11 +474,6 @@ class RecordEpisodeListenResponse(BaseModel):
     error: Optional[str] = None
 
 
-class BlogCategory(BaseModel):
-    id: str
-    name: str
-
-
 class BlogResponse(BaseModel):
     id: str
     slug: str
@@ -488,7 +483,7 @@ class BlogResponse(BaseModel):
     author: str
     created_at: Optional[str] = None
     categories: List[BlogCategory] = []
-    image_url: str
+    image_url: Optional[str] = None
 
 
 class BlogsResponse(BaseModel):
