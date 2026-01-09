@@ -194,18 +194,33 @@ class StripeService:
         try:
             subscription = stripe.Subscription.retrieve(subscription_id)
 
+            # Convert Stripe object to dict for easier access
+            sub_dict = dict(subscription)
+
+            # Get period dates from items (subscription items have the current period)
+            items_data = sub_dict.get('items', {}).get('data', [])
+            plan_id = None
+            current_period_start = None
+            current_period_end = None
+
+            if items_data:
+                first_item = items_data[0]
+                plan_id = first_item.get('price', {}).get('id')
+                current_period_start = first_item.get('current_period_start')
+                current_period_end = first_item.get('current_period_end')
+
             return {
-                "id": subscription.id,
-                "customer": subscription.customer,
-                "status": subscription.status,
-                "current_period_start": datetime.fromtimestamp(subscription.current_period_start, tz=timezone.utc),
-                "current_period_end": datetime.fromtimestamp(subscription.current_period_end, tz=timezone.utc),
-                "cancel_at_period_end": subscription.cancel_at_period_end,
-                "canceled_at": datetime.fromtimestamp(subscription.canceled_at, tz=timezone.utc) if subscription.canceled_at else None,
-                "trial_start": datetime.fromtimestamp(subscription.trial_start, tz=timezone.utc) if subscription.trial_start else None,
-                "trial_end": datetime.fromtimestamp(subscription.trial_end, tz=timezone.utc) if subscription.trial_end else None,
-                "plan_id": subscription.items.data[0].price.id if subscription.items.data else None,
-                "metadata": subscription.metadata
+                "id": sub_dict['id'],
+                "customer": sub_dict['customer'],
+                "status": sub_dict['status'],
+                "current_period_start": datetime.fromtimestamp(current_period_start, tz=timezone.utc) if current_period_start else None,
+                "current_period_end": datetime.fromtimestamp(current_period_end, tz=timezone.utc) if current_period_end else None,
+                "cancel_at_period_end": sub_dict['cancel_at_period_end'],
+                "canceled_at": datetime.fromtimestamp(sub_dict['canceled_at'], tz=timezone.utc) if sub_dict.get('canceled_at') else None,
+                "trial_start": datetime.fromtimestamp(sub_dict['trial_start'], tz=timezone.utc) if sub_dict.get('trial_start') else None,
+                "trial_end": datetime.fromtimestamp(sub_dict['trial_end'], tz=timezone.utc) if sub_dict.get('trial_end') else None,
+                "plan_id": plan_id,
+                "metadata": sub_dict.get('metadata', {})
             }
 
         except stripe.error.StripeError as e:
