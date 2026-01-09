@@ -445,6 +445,7 @@ class CreateGrantApplicationRequest(BaseModel):
     )
     willing_to_share: YesNo
     heard_about: HeardAbout
+    phone_number: str
 
 
 class CreateGrantApplicationResponse(BaseModel):
