@@ -111,6 +111,103 @@ class SupabasePostsClient:
         # Wait for all tasks to complete
         return await asyncio.gather(*tasks)
 
+    async def _regenerate_urls_in_feed(self, feed_data: Dict) -> None:
+        """
+        Regenerate fresh pre-signed URLs for all media in cached feed data.
+        This ensures URLs are always fresh even when served from cache.
+
+        Args:
+            feed_data: Feed response dictionary with posts
+        """
+        try:
+            posts = feed_data.get("posts", [])
+            if not posts:
+                return
+
+            # Collect all media items and avatars that need URL regeneration
+            media_tasks = []
+            avatar_tasks = []
+
+            for post in posts:
+                # Regenerate post media URLs
+                media_items = post.get("media_items", [])
+                if media_items:
+                    media_tasks.append((post, media_items))
+
+                # Regenerate user avatar URL
+                user = post.get("user", {})
+                avatar_storage_path = user.get("avatar_storage_path")
+                if avatar_storage_path:
+                    avatar_tasks.append(user)
+
+            # Generate all URLs in parallel
+            loop = asyncio.get_event_loop()
+            all_tasks = []
+
+            # Create tasks for post media
+            for post, media_items in media_tasks:
+                task = loop.run_in_executor(
+                    self._thread_pool,
+                    self._regenerate_media_urls_sync,
+                    media_items
+                )
+                all_tasks.append((task, 'media', post, media_items))
+
+            # Create tasks for avatars
+            for user in avatar_tasks:
+                task = loop.run_in_executor(
+                    self._thread_pool,
+                    self._generate_avatar_url_sync,
+                    user.get("avatar_storage_path")
+                )
+                all_tasks.append((task, 'avatar', user, None))
+
+            # Wait for all URL generation tasks
+            results = await asyncio.gather(*[task for task, _, _, _ in all_tasks], return_exceptions=True)
+
+            # Apply results back to the feed data
+            for i, (task, task_type, target, media_items) in enumerate(all_tasks):
+                try:
+                    result = results[i]
+                    if isinstance(result, Exception):
+                        logger.error(f"Error regenerating {task_type} URL: {result}")
+                        continue
+
+                    if task_type == 'media' and media_items:
+                        # Update media item URLs
+                        for j, media in enumerate(media_items):
+                            if j < len(result):
+                                media['url'] = result[j]
+                    elif task_type == 'avatar' and result:
+                        # Update avatar URL
+                        target['avatar_url'] = result
+
+                except Exception as e:
+                    logger.error(f"Error applying regenerated {task_type} URL: {e}")
+
+            logger.debug(f"Regenerated URLs for {len(media_tasks)} media groups and {len(avatar_tasks)} avatars")
+
+        except Exception as e:
+            logger.error(f"Error regenerating URLs in feed: {e}", exc_info=True)
+            # Don't fail the request if URL regeneration fails
+
+    def _regenerate_media_urls_sync(self, media_items: List[Dict]) -> List[str]:
+        """Synchronous wrapper to regenerate URLs for media items"""
+        return [self._generate_signed_url_for_media(media) for media in media_items]
+
+    def _generate_avatar_url_sync(self, storage_path: str) -> Optional[str]:
+        """Synchronous wrapper to generate avatar URL"""
+        if not storage_path:
+            return None
+
+        try:
+            from media_service import MediaService
+            media_service = MediaService()
+            return media_service.generate_signed_url(storage_path, expiry=3600)
+        except Exception as e:
+            logger.error(f"Failed to generate avatar URL for {storage_path}: {e}")
+            return None
+
     # Posts CRUD
     async def get_available_categories(self) -> List[Dict[str, Any]]:
         """Get all available post categories for AI post categorization"""
@@ -619,7 +716,9 @@ class SupabasePostsClient:
             # Check cache first (event-based + TTL validation)
             cached_result = self.feed_cache.get(user_id, limit, cursor, offset)
             if cached_result:
-                logger.debug(f"Returning feed from cache for user {user_id[:8]}...")
+                logger.debug(f"Feed cache HIT for user {user_id[:8]}... - regenerating URLs")
+                # Regenerate fresh pre-signed URLs (URLs in cache may be expired)
+                await self._regenerate_urls_in_feed(cached_result)
                 return {
                     "success": True,
                     "data": cached_result
@@ -692,6 +791,7 @@ class SupabasePostsClient:
                         # Extract user data from cached profile
                         name = user_profile.get("name", "Unknown User")
                         avatar_url = user_profile.get("avatar_url")  # Already signed in cache
+                        avatar_storage_path = user_profile.get("avatar_storage_path")  # Store for URL regeneration
                         bio = user_profile.get("bio")
                         podcast_name = user_profile.get("podcast_name")
                         podcast_id = user_profile.get("podcast_id")
@@ -704,12 +804,13 @@ class SupabasePostsClient:
                         signed_urls = await self._generate_signed_urls_parallel(post_media_list) if post_media_list else []
                         signed_urls_filtered = await self._generate_signed_urls_parallel(media_with_path) if media_with_path else []
 
-                        # Build media_items with signed URLs
+                        # Build media_items with signed URLs and storage paths
                         media_items_formatted = []
                         for idx, media in enumerate(post_media_list):
                             media_items_formatted.append({
                                 "id": media.get("id"),
                                 "url": signed_urls[idx] if idx < len(signed_urls) else "",
+                                "storage_path": media.get("storage_path"),  # Store for URL regeneration
                                 "type": media.get("type", "image"),
                                 "thumbnail_url": media.get("thumbnail_url"),
                                 "duration": media.get("duration"),
@@ -735,6 +836,7 @@ class SupabasePostsClient:
                                 "id": post["user_id"],
                                 "name": name,
                                 "avatar_url": avatar_url,
+                                "avatar_storage_path": avatar_storage_path,  # Store for URL regeneration
                                 "podcast_name": podcast_name,
                                 "podcast_id": podcast_id,
                                 "bio": bio,

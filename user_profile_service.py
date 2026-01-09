@@ -148,6 +148,12 @@ class UserProfileService:
             else:
                 full_name = signup_data.get("name")
 
+            # Extract storage path from avatar URL for URL regeneration
+            avatar_url = profile_data.get("avatar_url")
+            avatar_storage_path = None
+            if avatar_url and avatar_url.startswith(self.r2_public_url):
+                avatar_storage_path = avatar_url.replace(f"{self.r2_public_url}/", "")
+
             # Build profile with R2 direct URL (not signed)
             profile = {
                 "id": user_id,
@@ -157,7 +163,8 @@ class UserProfileService:
                 "email": signup_data.get("email"),
                 "bio": profile_data.get("bio"),
                 "location": profile_data.get("location"),
-                "avatar_url": profile_data.get("avatar_url"),  # Store R2 direct URL
+                "avatar_url": avatar_url,  # Store R2 direct URL
+                "avatar_storage_path": avatar_storage_path,  # Store path for URL regeneration
                 "podcast_id": podcast_data.get("id"),
                 "podcast_name": podcast_data.get("title"),
                 "connections_count": connections_count,
@@ -575,6 +582,12 @@ class UserProfileService:
                 else:
                     full_name = signup.get("name")
 
+                # Extract storage path from avatar URL for URL regeneration
+                avatar_url = profile.get("avatar_url")
+                avatar_storage_path = None
+                if avatar_url and avatar_url.startswith(self.r2_public_url):
+                    avatar_storage_path = avatar_url.replace(f"{self.r2_public_url}/", "")
+
                 # Build profile with R2 direct URL (not signed)
                 user_profile = {
                     "id": user_id,
@@ -582,7 +595,8 @@ class UserProfileService:
                     "email": signup.get("email"),
                     "bio": profile.get("bio"),
                     "location": profile.get("location"),
-                    "avatar_url": profile.get("avatar_url"),  # Store R2 direct URL
+                    "avatar_url": avatar_url,  # Store R2 direct URL
+                    "avatar_storage_path": avatar_storage_path,  # Store path for URL regeneration
                     "podcast_id": podcast.get("id"),
                     "podcast_name": podcast.get("title")
                 }
