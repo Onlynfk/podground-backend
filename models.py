@@ -494,7 +494,7 @@ class BlogResponse(BaseModel):
     author: str
     created_at: Optional[str] = None
     categories: List[BlogCategory] = []
-    image_url: str
+    image_url: Optional[str] = None
 
 
 class BlogsResponse(BaseModel):

@@ -909,5 +909,55 @@ class ResourcesService:
             )
             # Don't raise exception for non-critical operation
 
+    async def get_blog(self, blog_id: str):
+        try:
+            response = (
+                self.supabase.from_("resources")
+                .select(
+                    """
+                id,
+                title,
+                description,
+                image_url,
+                author,
+                created_at,
+                blog_resource_categories(
+                    blog_categories(
+                        id,
+                        name
+                    )
+                )
+            """
+                )
+                .eq("id", blog_id)
+                .eq("is_blog", True)
+                .single()
+                .execute()
+            )
+
+            row = response.data
+
+            categories = [
+                c["blog_categories"]
+                for c in row.get("blog_resource_categories", [])
+                if c.get("blog_categories")
+            ]
+
+            return {
+                "id": row["id"],
+                "slug": str(row["id"]),
+                "title": row["title"],
+                "summary": row["description"][:100],
+                "content": row["description"],
+                "image_url": row["image_url"],
+                "author": row["author"] or "Podground Team",
+                "created_at": row["created_at"],
+                "categories": categories,
+            }
+
+        except Exception as e:
+            raise e
+
 
 resources_service = ResourcesService()
+
