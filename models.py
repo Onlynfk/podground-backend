@@ -427,8 +427,8 @@ class BlogsResponse(BaseModel):
     blogs: List[BlogResponse]
     total_count: int
     has_more: bool
-      
- 
+
+
 # Stripe/Subscription Models
 class CreateCheckoutSessionRequest(BaseModel):
     plan: Literal["pro_monthly", "lifetime"]
@@ -454,7 +454,9 @@ class CreatePortalSessionResponse(BaseModel):
 class SubscriptionStatus(BaseModel):
     has_subscription: bool
     subscription_type: Optional[Literal["recurring", "lifetime"]] = None
-    status: Optional[str] = None  # active, canceled, past_due, lifetime_active, etc.
+    status: Optional[str] = (
+        None  # active, canceled, past_due, lifetime_active, etc.
+    )
     plan_id: Optional[str] = None
     current_period_end: Optional[datetime] = None
     cancel_at_period_end: Optional[bool] = None
@@ -475,6 +477,11 @@ class RecordEpisodeListenResponse(BaseModel):
     error: Optional[str] = None
 
 
+class BlogCategory(BaseModel):
+    id: str
+    name: str
+
+
 class BlogResponse(BaseModel):
     id: str
     slug: str
@@ -485,9 +492,3 @@ class BlogResponse(BaseModel):
     created_at: Optional[str] = None
     categories: List[BlogCategory] = []
     image_url: str
-
-
-class BlogsResponse(BaseModel):
-    blogs: List[BlogResponse]
-    total_count: int
-    has_more: bool
