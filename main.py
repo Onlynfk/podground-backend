@@ -2,7 +2,7 @@ import os
 import re
 from uuid import UUID
 from dotenv import load_dotenv
-
+from fastapi.staticfiles import StaticFiles
 # Load environment variables FIRST before any other imports
 load_dotenv()
 
@@ -302,6 +302,13 @@ async def h11_protocol_error_handler(request: Request, exc: LocalProtocolError):
 
 app.add_exception_handler(LocalProtocolError, h11_protocol_error_handler)
 
+
+app.mount(
+    "/static",
+    StaticFiles(directory="static"),
+    name="static",
+)
+
 # Session middleware (add before other middleware)
 session_secret = os.getenv("SESSION_SECRET_KEY", "your-secret-key-change-in-production")
 session_hours = int(os.getenv("SESSION_MAX_AGE_HOURS", "24"))  # Default 24 hours
@@ -314,6 +321,8 @@ is_production = environment == "production"  # True only for production
 logger.info(
     f"Environment: {environment}, Is Deployed: {is_deployed}, Is Production: {is_production}"
 )
+
+
 
 
 # Custom middleware to handle session cookies with proper cross-origin settings
@@ -418,9 +427,10 @@ app.add_middleware(
     https_only=False,  # Default, will be overridden by custom middleware
 )
 
+
+
 # Enable custom session cookie middleware for cross-origin support
 app.add_middleware(SessionCookieMiddleware)
-
 
 # IP allowlist middleware for Swagger/docs endpoints
 class DocsIPFilterMiddleware(BaseHTTPMiddleware):
@@ -527,6 +537,8 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
+
+
 # Initialize clients
 customerio_client = CustomerIOClient()
 supabase_client = SupabaseClient()
@@ -613,6 +625,9 @@ def is_rss_url(input_string: str) -> bool:
         return True
 
     return False
+
+
+
 
 
 def get_magic_link_expiry_seconds() -> int:
