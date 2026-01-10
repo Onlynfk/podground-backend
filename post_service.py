@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List
 
 from supabase_client import SupabaseClient, get_supabase_client
 from models import BlogCategory  # Assuming BlogCategory is in models.py
