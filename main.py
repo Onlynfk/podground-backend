@@ -2,7 +2,7 @@ import os
 import re
 from uuid import UUID
 from dotenv import load_dotenv
-
+from fastapi.staticfiles import StaticFiles
 # Load environment variables FIRST before any other imports
 load_dotenv()
 
@@ -32,6 +32,8 @@ from fastapi.responses import (
     RedirectResponse,
     Response,
 )
+import django
+from fastadmin import fastapi_app as admin_app
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from sqlalchemy.orm import Session
@@ -113,6 +115,10 @@ from models import (
     TopicsResponse,
     ResourcesResponse,
     EventsResponse,
+    # Blog post models
+    BlogResponse,
+    BlogsResponse,
+    BlogCategory,
     # Subscription models
     SubscriptionPlansResponse,
     UserSubscriptionResponse,
@@ -151,6 +157,7 @@ from models import (
     CreatePortalSessionResponse,
     SubscriptionStatus,
     SubscriptionStatusResponse,
+    VerifySessionResponse,
     # Episode Listen models
     RecordEpisodeListenResponse,
     # Base model for new request classes
@@ -190,6 +197,7 @@ from access_control import (
     require_premium_access,
 )
 from resources_service import resources_service
+from post_service import post_service
 from events_service import events_service
 from podcast_service import PodcastDiscoveryService
 from user_listening_service import UserListeningService
@@ -205,6 +213,9 @@ from feed_cache_service import get_feed_cache_service
 from user_settings_service import get_user_settings_service
 from notification_service import NotificationService, notification_manager
 from resource_interaction_service import get_resource_interaction_service
+import os
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "admin.settings")
+django.setup()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -294,6 +305,13 @@ async def h11_protocol_error_handler(request: Request, exc: LocalProtocolError):
 
 app.add_exception_handler(LocalProtocolError, h11_protocol_error_handler)
 
+
+app.mount(
+    "/static",
+    StaticFiles(directory="static"),
+    name="static",
+)
+
 # Session middleware (add before other middleware)
 session_secret = os.getenv("SESSION_SECRET_KEY", "your-secret-key-change-in-production")
 session_hours = int(os.getenv("SESSION_MAX_AGE_HOURS", "24"))  # Default 24 hours
@@ -306,6 +324,8 @@ is_production = environment == "production"  # True only for production
 logger.info(
     f"Environment: {environment}, Is Deployed: {is_deployed}, Is Production: {is_production}"
 )
+
+
 
 
 # Custom middleware to handle session cookies with proper cross-origin settings
@@ -410,9 +430,10 @@ app.add_middleware(
     https_only=False,  # Default, will be overridden by custom middleware
 )
 
+
+
 # Enable custom session cookie middleware for cross-origin support
 app.add_middleware(SessionCookieMiddleware)
-
 
 # IP allowlist middleware for Swagger/docs endpoints
 class DocsIPFilterMiddleware(BaseHTTPMiddleware):
@@ -519,6 +540,8 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
+
+
 # Initialize clients
 customerio_client = CustomerIOClient()
 supabase_client = SupabaseClient()
@@ -605,6 +628,9 @@ def is_rss_url(input_string: str) -> bool:
         return True
 
     return False
+
+
+
 
 
 def get_magic_link_expiry_seconds() -> int:
@@ -1892,7 +1918,7 @@ async def refresh_user_session(
         if not refresh_token:
             logger.warning("❌ No refresh token found in cookies")
             logger.warning(f"Available cookie keys: {list(request.cookies.keys())}")
-            return RefreshSessionResponse(ok=False, error="No refresh token found")
+            raise HTTPException(status_code=401, detail="No refresh token found")
 
         # Validate refresh token
         logger.info(f"Validating refresh token (length: {len(refresh_token)})")
@@ -1902,9 +1928,7 @@ async def refresh_user_session(
             logger.warning("❌ Invalid or expired refresh token")
             # Clear invalid cookie
             response.delete_cookie("refresh_token")
-            return RefreshSessionResponse(
-                ok=False, error="Invalid or expired refresh token"
-            )
+            raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
 
         user_id = token_info["user_id"]
         logger.info(f"✅ Refresh token valid for user {user_id}")
@@ -1918,12 +1942,12 @@ async def refresh_user_session(
             )
             if not user_data or not user_data.user:
                 logger.error(f"❌ User not found in Supabase: {user_id}")
-                return RefreshSessionResponse(ok=False, error="User not found")
+                raise HTTPException(status_code=401, detail="User not found")
             user_email = user_data.user.email
             logger.info(f"✅ User data retrieved: {user_email}")
         except Exception as e:
             logger.error(f"❌ Failed to get user data: {str(e)}")
-            return RefreshSessionResponse(ok=False, error="Failed to validate user")
+            raise HTTPException(status_code=401, detail="Failed to validate user")
 
         # Create new session
         logger.info("Creating new session")
@@ -1992,10 +2016,13 @@ async def refresh_user_session(
         logger.info("=" * 60)
         return RefreshSessionResponse(ok=True, message="Session refreshed successfully")
 
+    except HTTPException:
+        # Re-raise HTTP exceptions (401 errors)
+        raise
     except Exception as e:
         logger.error(f"❌ Session refresh error: {str(e)}")
         logger.error("=" * 60)
-        return RefreshSessionResponse(ok=False, error="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/v1/auth/callback", tags=["Authentication"])
@@ -3396,6 +3423,53 @@ async def get_user_favorite_podcasts(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@app.get("/api/v1/user/conversation-limits", tags=["User"])
+@limiter.limit("60/minute")
+async def get_user_conversation_limits(
+    request: Request, user_id: str = Depends(get_current_user_from_session)
+):
+    """Get user's conversation limits and current usage status"""
+    try:
+        # Call database function to get conversation status
+        result = supabase_client.service_client.rpc(
+            'get_user_conversation_status',
+            {'user_uuid': user_id}
+        ).execute()
+
+        if result.data and len(result.data) > 0:
+            status = result.data[0]
+            return {
+                "success": True,
+                "data": {
+                    "conversations_used": status["conversations_used"],
+                    "max_conversations": status["max_conversations"],
+                    "conversations_remaining": status["conversations_remaining"],
+                    "cycle_start_date": status["cycle_start_date"],
+                    "cycle_end_date": status["cycle_end_date"],
+                    "days_until_reset": status["days_until_reset"],
+                    "can_start_new": status["can_start_new"]
+                }
+            }
+        else:
+            # Return default for users without limits record (shouldn't happen but graceful fallback)
+            return {
+                "success": True,
+                "data": {
+                    "conversations_used": 0,
+                    "max_conversations": 5,
+                    "conversations_remaining": 5,
+                    "cycle_start_date": None,
+                    "cycle_end_date": None,
+                    "days_until_reset": 30,
+                    "can_start_new": True
+                }
+            }
+
+    except Exception as e:
+        logger.error(f"Error getting conversation limits: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get conversation limits")
+
+
 # Posts and Social Features Endpoints
 
 
@@ -4787,21 +4861,22 @@ async def get_trending_topics(request: Request, limit: int = 20):
 
 # Resources Endpoints
 
-@app.get("/api/v1/blogs/categories/all", response_model=List[ResourceCategoryResponse], tags=["Blogs"])
+@app.get("/api/v1/blogs/categories/all", response_model=List[BlogCategory], tags=["Blogs"])
 @limiter.limit("60/minute")
 async def get_all_blog_categories(request: Request):
     """
     Get all available blog categories.
     """
     try:
-        categories_data = await resources_service.get_resource_categories()
+        categories_data = await resources_service.get_all_blog_categories()
         return categories_data
     except Exception as e:
         logger.error(f"Failed to get blog categories: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve blog categories")
 
+
 @app.get(
-    "/api/v1/resources/blogs",
+    "/api/v1/blogs/all",
     response_model=BlogsResponse,
     tags=["Blogs"],
     summary="Get all blog posts",
@@ -4820,6 +4895,20 @@ async def get_all_blog_posts(
             limit=limit, offset=offset
         )
         return result
+    except Exception as e:
+        logger.error(f"Failed to get blog posts: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve blog posts")
+
+
+@app.get(
+    "/api/v1/blog/{blog_id}",
+    tags=["Blogs"],
+    summary="Get single blog post",
+    response_model=BlogResponse
+)
+async def get_single_blog_post(blog_id:str)-> Dict[str, Any]:
+    try:
+        return await resources_service.get_blog(blog_id)
     except Exception as e:
         logger.error(f"Failed to get blog posts: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve blog posts")
@@ -8726,6 +8815,73 @@ async def create_portal_session(
         )
 
 
+@app.get("/api/v1/stripe/verify-session/{session_id}", response_model=VerifySessionResponse, tags=["Stripe"])
+async def verify_checkout_session(session_id: str, request: Request):
+    """
+    Verify a Stripe checkout session and return payment status.
+    Used to confirm successful payment after redirect from Stripe.
+    User must be authenticated.
+    """
+    try:
+        # Get authenticated user
+        user_id = get_current_user_id(request)
+
+        logger.info(f"Verifying checkout session {session_id} for user {user_id}")
+
+        # Initialize Stripe service
+        from stripe_service import StripeService
+        stripe_service = StripeService()
+
+        # Retrieve session from Stripe
+        session_data = stripe_service.retrieve_checkout_session(session_id)
+
+        if not session_data:
+            return VerifySessionResponse(
+                success=False,
+                error="Invalid session ID or session not found"
+            )
+
+        # Verify session belongs to this user (security check)
+        session_user_id = session_data.get("metadata", {}).get("user_id")
+        if session_user_id != user_id:
+            logger.warning(f"Session {session_id} does not belong to user {user_id}")
+            raise HTTPException(status_code=403, detail="Session does not belong to user")
+
+        # Determine plan type based on mode and metadata
+        plan_type = None
+        if session_data["mode"] == "subscription":
+            plan_type = "pro_monthly"
+        elif session_data["mode"] == "payment":
+            # Check if this is a lifetime payment
+            if session_data.get("payment_intent"):
+                # Retrieve payment intent to check metadata
+                payment_data = stripe_service.retrieve_payment_intent(session_data["payment_intent"])
+                if payment_data and payment_data.get("metadata", {}).get("plan_type") == "lifetime":
+                    plan_type = "lifetime"
+
+        logger.info(f"✅ Session {session_id} verified: payment_status={session_data['payment_status']}, plan_type={plan_type}")
+
+        return VerifySessionResponse(
+            success=True,
+            payment_status=session_data["payment_status"],
+            customer_email=session_data["customer_email"],
+            amount_total=session_data["amount_total"],
+            currency=session_data["currency"],
+            subscription_id=session_data["subscription"] if session_data["mode"] == "subscription" else None,
+            payment_intent_id=session_data["payment_intent"] if session_data["mode"] == "payment" else None,
+            plan_type=plan_type
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error verifying session {session_id}: {str(e)}", exc_info=True)
+        return VerifySessionResponse(
+            success=False,
+            error="Failed to verify session"
+        )
+
+
 @app.post("/api/v1/stripe/webhook", tags=["Stripe"])
 async def stripe_webhook(request: Request):
     """
@@ -8952,15 +9108,27 @@ async def get_subscription_status(request: Request):
         subscription_data = result.get("data")
 
         if not subscription_data:
-            # No subscription
+            # No subscription - Free plan
             return SubscriptionStatusResponse(
                 success=True,
-                subscription=SubscriptionStatus(has_subscription=False)
+                subscription=SubscriptionStatus(
+                    has_subscription=False,
+                    plan="free"
+                )
             )
 
         # Parse dates
         current_period_end = datetime.fromisoformat(subscription_data["current_period_end"].replace("Z", "+00:00")) if subscription_data.get("current_period_end") else None
         trial_end = datetime.fromisoformat(subscription_data["trial_end"].replace("Z", "+00:00")) if subscription_data.get("trial_end") else None
+
+        # Determine plan based on subscription type and lifetime access
+        plan = "free"
+        if subscription_data.get("lifetime_access"):
+            plan = "lifetime"
+        elif subscription_data.get("subscription_type") == "recurring":
+            plan = "pro_monthly"
+        elif subscription_data.get("subscription_type") == "lifetime":
+            plan = "lifetime"
 
         return SubscriptionStatusResponse(
             success=True,
@@ -8968,6 +9136,7 @@ async def get_subscription_status(request: Request):
                 has_subscription=True,
                 subscription_type=subscription_data.get("subscription_type", "recurring"),
                 status=subscription_data["status"],
+                plan=plan,
                 plan_id=subscription_data["plan_id"],
                 current_period_end=current_period_end,
                 cancel_at_period_end=subscription_data.get("cancel_at_period_end", False),
@@ -9087,14 +9256,30 @@ async def create_grant_application(
                     },
                 )
 
-        response = supabase.create_grant_application(grant_application.model_dump()) 
+        response = supabase.create_grant_application(grant_application.model_dump())
         new_application = None
         if response.get("success"):
             new_application = response.get("data")
-        
+
             print(new_application)
             # Log the successful application
             logger.info(f"New grant application created for {grant_application.email}: {grant_application.podcast_title}")
+
+            # Add contact to Customer.io (graceful degradation - don't fail if this errors)
+            try:
+                customerio_result = customerio_client.add_grant_application_contact(
+                    email=grant_application.email,
+                    name=grant_application.name,
+                    podcast_title=grant_application.podcast_title
+                )
+                if customerio_result.get("success"):
+                    logger.info(f"Customer.io: {customerio_result.get('message')}")
+                else:
+                    logger.warning(f"Customer.io grant application contact failed: {customerio_result.get('error')}")
+            except Exception as cio_error:
+                # Log but don't fail the request
+                logger.error(f"Customer.io grant application error: {str(cio_error)}")
+
         # Return response using the response model
             return CreateGrantApplicationResponse(**new_application)
 
@@ -9122,6 +9307,7 @@ async def create_grant_application(
 #         logger.error(f"Manual podcast categorization error: {str(e)}")
 #         raise HTTPException(status_code=500, detail=f"Categorization failed: {str(e)}")
 
+app.mount("/admin", admin_app)
 
 if __name__ == "__main__":
     import uvicorn

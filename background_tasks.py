@@ -460,9 +460,21 @@ async def refresh_featured_podcast_episodes() -> Dict:
         
         # Initialize podcast service
         podcast_service = PodcastDiscoveryService(supabase_client.service_client)
-        
-        # Get TTL from environment (default: 6 hours)
-        ttl_hours = int(os.getenv('LATEST_EPISODE_TTL_HOURS', '6'))
+
+        # Get TTL from environment - support both MINUTES and HOURS for backward compatibility
+        ttl_minutes = os.getenv('LATEST_EPISODE_TTL_MINUTES')
+        ttl_hours_env = os.getenv('LATEST_EPISODE_TTL_HOURS')
+
+        if ttl_minutes:
+            # If MINUTES is set, use it (convert to hours)
+            ttl_hours = int(ttl_minutes) / 60
+        elif ttl_hours_env:
+            # If HOURS is set, use it
+            ttl_hours = int(ttl_hours_env)
+        else:
+            # Default: 6 hours
+            ttl_hours = 6
+
         ttl_threshold = datetime.now(timezone.utc) - timedelta(hours=ttl_hours)
         
         # Find featured podcasts with expired cache or no cache
@@ -577,10 +589,14 @@ async def refresh_stale_podcast_episodes() -> Dict:
         
         # Initialize podcast service
         podcast_service = PodcastDiscoveryService(supabase_client.service_client)
-        
-        # Check for podcasts with very stale cache (24+ hours)
-        stale_threshold = datetime.now(timezone.utc) - timedelta(hours=24)
-        
+
+        # Get stale threshold from environment (default: 24 hours)
+        stale_threshold_hours = int(os.getenv('STALE_EPISODE_THRESHOLD_HOURS', '24'))
+        stale_threshold = datetime.now(timezone.utc) - timedelta(hours=stale_threshold_hours)
+
+        # Get batch size from environment (default: 10)
+        batch_size = int(os.getenv('STALE_EPISODE_BATCH_SIZE', '10'))
+
         try:
             # Find podcasts with very old cache
             stale_result = supabase_client.service_client.table('podcasts') \
@@ -588,7 +604,7 @@ async def refresh_stale_podcast_episodes() -> Dict:
                 .not_.is_('listennotes_id', None) \
                 .not_.is_('latest_episode_updated_at', None) \
                 .lt('latest_episode_updated_at', stale_threshold.isoformat()) \
-                .limit(10) \
+                .limit(batch_size) \
                 .execute()
         except Exception as e:
             if 'latest_episode_updated_at' in str(e):

@@ -108,7 +108,7 @@ class StripeService:
                     "price": price_id,
                     "quantity": 1
                 }],
-                "success_url": success_url or self.success_url,
+                "success_url": f"{success_url or self.success_url}?session_id={{CHECKOUT_SESSION_ID}}",
                 "cancel_url": cancel_url or self.cancel_url,
                 "metadata": {
                     "user_id": user_id
@@ -321,6 +321,45 @@ class StripeService:
         except Exception as e:
             logger.error(f"Error canceling subscription: {str(e)}")
             return False
+
+    def retrieve_checkout_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve checkout session details from Stripe.
+
+        Args:
+            session_id: Stripe checkout session ID
+
+        Returns:
+            Session data dict or None on error
+        """
+        try:
+            session = stripe.checkout.Session.retrieve(session_id)
+
+            # Convert to dict for easier access
+            session_dict = dict(session)
+
+            return {
+                "id": session_dict["id"],
+                "payment_status": session_dict.get("payment_status"),
+                "customer": session_dict.get("customer"),
+                "customer_email": session_dict.get("customer_details", {}).get("email") if session_dict.get("customer_details") else None,
+                "amount_total": session_dict.get("amount_total"),
+                "currency": session_dict.get("currency"),
+                "mode": session_dict.get("mode"),
+                "subscription": session_dict.get("subscription"),
+                "payment_intent": session_dict.get("payment_intent"),
+                "metadata": session_dict.get("metadata", {})
+            }
+
+        except stripe.error.InvalidRequestError as e:
+            logger.error(f"Invalid Stripe session ID {session_id}: {str(e)}")
+            return None
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe error retrieving session: {str(e)}")
+            return None
+        except Exception as e:
+            logger.error(f"Error retrieving checkout session: {str(e)}")
+            return None
 
     def reactivate_subscription(self, subscription_id: str) -> bool:
         """
