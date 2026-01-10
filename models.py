@@ -501,6 +501,7 @@ class BlogResponse(BaseModel):
     created_at: Optional[str] = None
     categories: List[BlogCategory] = []
     image_url: Optional[str] = None
+    is_featured: bool
 
 
 class BlogsResponse(BaseModel):
