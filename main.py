@@ -118,6 +118,7 @@ from models import (
     # Blog post models
     BlogResponse,
     BlogsResponse,
+    BlogCategory,
     # Subscription models
     SubscriptionPlansResponse,
     UserSubscriptionResponse,
@@ -196,6 +197,7 @@ from access_control import (
     require_premium_access,
 )
 from resources_service import resources_service
+from post_service import post_service
 from events_service import events_service
 from podcast_service import PodcastDiscoveryService
 from user_listening_service import UserListeningService
@@ -4859,18 +4861,19 @@ async def get_trending_topics(request: Request, limit: int = 20):
 
 # Resources Endpoints
 
-@app.get("/api/v1/blogs/categories/all", response_model=List[ResourceCategoryResponse], tags=["Blogs"])
+@app.get("/api/v1/blogs/categories/all", response_model=List[BlogCategory], tags=["Blogs"])
 @limiter.limit("60/minute")
 async def get_all_blog_categories(request: Request):
     """
     Get all available blog categories.
     """
     try:
-        categories_data = await resources_service.get_resource_categories()
+        categories_data = await resources_service.get_all_blog_categories()
         return categories_data
     except Exception as e:
         logger.error(f"Failed to get blog categories: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve blog categories")
+
 
 @app.get(
     "/api/v1/blogs/all",

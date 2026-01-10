@@ -8,10 +8,10 @@ logger = logging.getLogger(__name__)
 
 
 class PostService:
-    def __init__(self, supabase_client: SupabaseClient):
-        self.supabase_client = supabase_client
+    def __init__(self):
+        self.supabase_client = get_supabase_client()
 
-    async def get_blog_categories(self) -> List[BlogCategory]:
+    async def get_post_categories(self) -> List[BlogCategory]:
         """
         Fetches all active blog categories from the database.
         """
@@ -56,5 +56,7 @@ async def get_post_service() -> PostService:
     """
     Dependency to get PostService instance.
     """
-    supabase = get_supabase_client()
-    return PostService(supabase)
+    return PostService()
+
+
+post_service = PostService()

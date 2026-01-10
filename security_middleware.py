@@ -58,7 +58,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "frame-ancestors 'none'",
                 "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tiny.cloud",
                 "style-src 'self' 'unsafe-inline'",
-                "style-src-elem 'self' 'unsafe-inline' https://cdn.tiny.cloud",
+                "script-src-elem 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net",
+                "style-src-elem 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdn.tiny.cloud",
                 "img-src 'self' data: https:",
                 "font-src 'self' https://fonts.gstatic.com",
             ]
