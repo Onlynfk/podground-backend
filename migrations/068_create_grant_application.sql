@@ -1,0 +1,20 @@
+create table public.grant_applications (
+  id uuid not null default gen_random_uuid (),
+  name text not null,
+  email text not null,
+  podcast_title text not null,
+  podcast_link text not null,
+  podcasting_experience public.podcast_experience not null,
+  why_started text not null,
+  challenges podcast_challenge[] not null,
+  other_challenge_text text null,
+  biggest_challenge text not null,
+  goals_next_year text not null,
+  steps_to_achieve text not null,
+  proud_episode_link text null,
+  willing_to_share public.yes_no not null,
+  heard_about public.heard_about not null,
+  created_at timestamp without time zone null default now(),
+  constraint grant_applications_pkey primary key (id),
+  constraint grant_applications_email_key unique (email)
+) TABLESPACE pg_default;

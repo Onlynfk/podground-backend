@@ -363,6 +363,45 @@ class MessagesService:
                 existing.pop("last_message_id", None)
                 return {"success": True, "data": existing, "existing": True}
 
+            # Check conversation limits for free users (only for NEW conversations)
+            try:
+                can_start_result = supabase_client.service_client.rpc(
+                    'can_user_start_conversation',
+                    {'user_uuid': creator_id}
+                ).execute()
+
+                can_start = can_start_result.data if can_start_result.data is not None else False
+
+                if not can_start:
+                    # Get user's current status to provide helpful error message
+                    status_result = supabase_client.service_client.rpc(
+                        'get_user_conversation_status',
+                        {'user_uuid': creator_id}
+                    ).execute()
+
+                    if status_result.data and len(status_result.data) > 0:
+                        status = status_result.data[0]
+                        cycle_end = status.get('cycle_end_date', '')
+                        days_until_reset = status.get('days_until_reset', 0)
+
+                        return {
+                            "success": False,
+                            "error": f"You've reached your conversation limit (5 per month). Your limit will reset in {days_until_reset} days.",
+                            "limit_reached": True,
+                            "reset_date": cycle_end
+                        }
+                    else:
+                        return {
+                            "success": False,
+                            "error": "You've reached your conversation limit for this month. Upgrade to Pro for unlimited conversations.",
+                            "limit_reached": True
+                        }
+            except Exception as limit_error:
+                # Log the error but don't fail the conversation creation
+                # This ensures the feature degrades gracefully if there's an issue
+                logger.error(f"Error checking conversation limits: {limit_error}")
+                # Continue with conversation creation
+
             # Create direct conversation
             conversation_data = {
                 "conversation_type": "direct",
@@ -408,6 +447,21 @@ class MessagesService:
                 logger.info(
                     f"Created direct conversation {conversation_id} between {creator_id} and {recipient_id}"
                 )
+
+                # Record the new conversation for usage tracking
+                try:
+                    record_result = supabase_client.service_client.rpc(
+                        'record_new_conversation',
+                        {'user_uuid': creator_id, 'conversation_id': conversation_id}
+                    ).execute()
+
+                    if record_result.data:
+                        logger.info(f"Recorded conversation {conversation_id} for user {creator_id}")
+                    else:
+                        logger.warning(f"Failed to record conversation {conversation_id} for limits tracking")
+                except Exception as record_error:
+                    # Log but don't fail - this is just for tracking
+                    logger.error(f"Error recording conversation for limits: {record_error}")
 
                 # Remove unwanted fields before returning
                 conversation.pop("podcast_id", None)
