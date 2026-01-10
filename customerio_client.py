@@ -144,7 +144,102 @@ class CustomerIOClient:
             # Log the full error for debugging
             logger.error(f"Customer.io Pipelines microgrant error: {type(e).__name__}: {str(e)}", exc_info=True)
             return {"success": False, "error": f"Customer.io error: {str(e)}"}
-    
+
+    def add_grant_application_contact(self, email: str, name: str = "", podcast_title: str = "", user_id: str = None) -> Dict[str, Any]:
+        """Add a grant application contact to Customer.io using Pipelines API"""
+        if not self.client:
+            return {"success": False, "error": "Customer.io API credentials not configured"}
+
+        try:
+            # Use provided user_id or fall back to email as stable identifier
+            if not user_id:
+                user_id = email
+
+            # Create basic auth (Pipelines API key as username, no password)
+            auth_string = f"{self.pipelines_api_key}:"
+            encoded_auth = base64.b64encode(auth_string.encode()).decode()
+
+            headers = {
+                "Authorization": f"Basic {encoded_auth}",
+                "Content-Type": "application/json"
+            }
+
+            # Get current environment
+            environment = os.getenv("ENVIRONMENT", "dev")
+
+            # Step 1: Identify the user with grant_submission trait
+            identify_payload = {
+                "userId": user_id,
+                "traits": {
+                    "email": email,
+                    "grant_submission": environment
+                }
+            }
+
+            # Add name if provided
+            if name:
+                identify_payload["traits"]["name"] = name
+
+            # Add podcast title if provided
+            if podcast_title:
+                identify_payload["traits"]["podcast_title"] = podcast_title
+
+            logger.info(f"Customer.io Pipelines: Identifying grant application user {user_id} ({email}) with traits: {identify_payload['traits']}")
+
+            # Send identify request
+            identify_response = requests.post(
+                f"{self.base_url}/identify",
+                json=identify_payload,
+                headers=headers,
+                timeout=10
+            )
+
+            if not identify_response.ok:
+                logger.error(f"Customer.io grant application identify failed: {identify_response.status_code} - {identify_response.text}")
+                return {"success": False, "error": f"Failed to identify user: {identify_response.status_code}"}
+
+            # Step 2: Track the grant application submission event
+            track_payload = {
+                "userId": user_id,
+                "event": "grant_application_submitted",
+                "properties": {
+                    "source": "grant_application_api",
+                    "email": email,
+                    "grant_submission": environment,
+                    "podcast_title": podcast_title
+                }
+            }
+
+            logger.info(f"Customer.io Pipelines: Tracking event 'grant_application_submitted' for {user_id} ({email})")
+
+            # Send track request
+            track_response = requests.post(
+                f"{self.base_url}/track",
+                json=track_payload,
+                headers=headers,
+                timeout=10
+            )
+
+            if not track_response.ok:
+                logger.error(f"Customer.io grant application track failed: {track_response.status_code} - {track_response.text}")
+                return {"success": False, "error": f"Failed to track event: {track_response.status_code}"}
+
+            logger.info(f"Customer.io Pipelines: Successfully processed grant application user {user_id} ({email})")
+
+            # Get current environment segment ID
+            segment_id = self.get_current_segment_id()
+            if segment_id:
+                logger.info(f"Customer.io: Grant application contact will be automatically added to {environment} segment (ID: {segment_id})")
+                return {"success": True, "message": f"Grant application contact added to Customer.io ({environment} environment, auto-segmentation enabled)"}
+            else:
+                logger.warning(f"Customer.io: No segment ID configured for {environment} environment")
+                return {"success": True, "message": f"Grant application contact added to Customer.io ({environment} environment, no segment configured)"}
+
+        except Exception as e:
+            # Log the full error for debugging
+            logger.error(f"Customer.io Pipelines grant application error: {type(e).__name__}: {str(e)}", exc_info=True)
+            return {"success": False, "error": f"Customer.io error: {str(e)}"}
+
     def add_contact(self, email: str, first_name: str = "", last_name: str = "", variant: str = "A", user_id: str = None) -> Dict[str, Any]:
         """Add a contact to Customer.io using Pipelines API with correct format"""
         if not self.client:

@@ -73,27 +73,31 @@ class SchedulerService:
             max_instances=1
         )
         
-        # Job 3: Sync confirmed signups to Customer.io every 2 hours
+        # Job 3: Sync confirmed signups to Customer.io (configurable interval)
+        sync_confirmations_hours = int(os.getenv('SYNC_CONFIRMATIONS_HOURS', '2'))
         self.scheduler.add_job(
             sync_signup_confirmations,
-            trigger=CronTrigger(minute=30, hour="*/2"),  # Every 2 hours at minute 30
+            trigger=CronTrigger(minute=30, hour=f"*/{sync_confirmations_hours}"),
             id="sync_confirmations",
             name="Sync Signup Confirmations",
             misfire_grace_time=600,  # 10 minutes grace time
             coalesce=True,
             max_instances=1
         )
-        
-        # Job 4: Sync failed waitlist entries to Customer.io every 6 hours
+        logger.info(f"Sync signup confirmations scheduled every {sync_confirmations_hours} hours")
+
+        # Job 4: Sync failed waitlist entries to Customer.io (configurable interval)
+        sync_waitlist_hours = int(os.getenv('SYNC_FAILED_WAITLIST_HOURS', '6'))
         self.scheduler.add_job(
             sync_failed_waitlist_entries,
-            trigger=IntervalTrigger(hours=6),  # Run every 6 hours
+            trigger=IntervalTrigger(hours=sync_waitlist_hours),
             id="sync_failed_waitlist",
             name="Sync Failed Waitlist Entries",
             misfire_grace_time=300,  # 5 minute grace time
             coalesce=True,
             max_instances=1  # Prevent overlapping executions
         )
+        logger.info(f"Sync failed waitlist scheduled every {sync_waitlist_hours} hours")
         
         # Job 6: Process event reminders every 5 minutes
         # self.scheduler.add_job(
@@ -130,27 +134,31 @@ class SchedulerService:
         )
         logger.info(f"Claimed podcasts import job scheduled to run every {import_interval_minutes} minutes")
         
-        # Job 9: Refresh featured podcast episodes with expired TTL cache every 2 hours
+        # Job 9: Refresh featured podcast episodes with expired TTL cache (configurable interval)
+        featured_refresh_hours = int(os.getenv('FEATURED_EPISODES_REFRESH_HOURS', '2'))
         self.scheduler.add_job(
             refresh_featured_podcast_episodes,
-            trigger=CronTrigger(minute=10, hour="*/2"),  # Every 2 hours at minute 10
+            trigger=CronTrigger(minute=10, hour=f"*/{featured_refresh_hours}"),
             id="refresh_featured_episodes",
             name="Refresh Featured Podcast Episodes",
             misfire_grace_time=600,  # 10 minutes grace time
             coalesce=True,
             max_instances=1
         )
-        
-        # Job 10: Refresh very stale podcast episodes (24+ hours old) every 4 hours
+        logger.info(f"Featured podcast episodes refresh scheduled every {featured_refresh_hours} hours")
+
+        # Job 10: Refresh very stale podcast episodes (configurable interval)
+        stale_refresh_hours = int(os.getenv('STALE_EPISODES_REFRESH_HOURS', '4'))
         self.scheduler.add_job(
             refresh_stale_podcast_episodes,
-            trigger=CronTrigger(minute=20, hour="*/4"),  # Every 4 hours at minute 20
+            trigger=CronTrigger(minute=20, hour=f"*/{stale_refresh_hours}"),
             id="refresh_stale_episodes",
             name="Refresh Stale Podcast Episodes",
             misfire_grace_time=600,  # 10 minutes grace time
             coalesce=True,
             max_instances=1
         )
+        logger.info(f"Stale podcast episodes refresh scheduled every {stale_refresh_hours} hours")
 
         logger.info("Added 9 scheduled jobs: signup_reminders, podcast_claim_reminders, sync_confirmations, sync_failed_waitlist, process_event_reminders, categorize_podcasts, import_claimed_podcasts, refresh_featured_episodes, refresh_stale_episodes")
     

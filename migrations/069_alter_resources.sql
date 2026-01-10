@@ -1,0 +1,2 @@
+ALTER TABLE public.resources
+    ADD COLUMN is_blog BOOLEAN NOT NULL DEFAULT FALSE;
