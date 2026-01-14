@@ -1,9 +1,14 @@
 from typing import Any, Sequence
+from django.http.request import HttpRequest
 from django.contrib.auth.models import (
     AbstractBaseUser,
     PermissionsMixin,
     BaseUserManager,
 )
+from fastapi import UploadFile
+from tempfile import SpooledTemporaryFile
+import base64 as b64
+import io
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
 import uuid
@@ -13,6 +18,7 @@ from fastadmin import (
     ModelAdmin,
     register,
 )
+from context import get_current_user_id
 from decouple import config
 from fastadmin import (
     DashboardWidgetAdmin,
@@ -23,6 +29,11 @@ from fastadmin import (
 from django.db import connection
 import datetime
 from django.contrib import admin
+
+from auth_dependencies import get_current_user_from_request
+from media_service import MediaService
+
+media_service = MediaService()
 
 
 # general models needed
@@ -348,6 +359,7 @@ class Resource(models.Model):
     required_plan = models.CharField(max_length=50, default="free")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    is_blog = models.BooleanField(default=False)
 
     class Meta:
         db_table = "resources"
@@ -417,6 +429,7 @@ class AdminUser(DjangoModelAdmin):
     exclude = ("password",)
 
     def authenticate(self, username, password):
+        print(user)
         user = Admin.objects.filter(email=username).first()
         if not user:
             return None
@@ -545,12 +558,58 @@ class ResourceAdmin(DjangoModelAdmin):
 
     list_display_links = ("title",)
     formfield_overrides = {
-        "image_url": (WidgetType.Upload, {"required": False})
+        "image_url": (WidgetType.Upload, {"required": False}),
+        "url": (WidgetType.Upload, {"required": False}),
     }
 
-    def orm_save_upload_field(self, obj, field: str, base64: str) -> None:
-        print("error")
-        pass
+    def extract_base64(self, data: str) -> tuple[str, str | None]:
+        """
+        Returns (base64_payload, content_type)
+        """
+        if data.startswith("data:"):
+            header, payload = data.split(",", 1)
+            # header looks like: data:image/png;base64
+            content_type = header.split(";")[0].replace("data:", "")
+            return payload, content_type
+        return data, None
+
+    def decode_data_url(self, data_url: str) -> bytes:
+        # Split by comma, the second part is the actual Base64
+        if "," in data_url:
+            header, encoded = data_url.split(",", 1)
+        else:
+            encoded = data_url
+
+        # Fix padding if necessary
+        missing_padding = len(encoded) % 4
+        if missing_padding:
+            encoded += "=" * (4 - missing_padding)
+
+        return b64.b64decode(encoded)
+
+    async def orm_save_upload_field(
+        self, obj: Any, field: str, base64: str
+    ) -> None:
+        user_id = get_current_user_id()
+        if not user_id:
+            raise RuntimeError("User context missing")
+        print("this is the user id")
+        rb = self.decode_data_url(base64)
+        # get_current_user_from_request()
+
+        temp_file = SpooledTemporaryFile()
+        temp_file.write(rb)
+        temp_file.seek(0)
+        upload_file = UploadFile(
+            filename=f"{field}.jpg",  # choose dynamically if needed
+            file=temp_file,
+        )
+
+        media = await media_service.upload_media_files(
+            [upload_file], "550e8400-e29b-41d4-a716-446655440000"
+        )
+        print(media)
+        return super().orm_save_upload_field(obj, field, base64)
 
 
 @register(Comment)

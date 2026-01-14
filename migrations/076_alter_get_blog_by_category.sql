@@ -12,7 +12,7 @@ RETURNS TABLE (
     created_at TIMESTAMPTZ,
     author TEXT,
     categories JSON,
-    is_featured BOOL
+    is_featured BOOLEAN
 )
 LANGUAGE plpgsql
 AS $$
@@ -21,7 +21,7 @@ BEGIN
     SELECT
         r.id,
         r.id::TEXT AS slug,
-        r.title,
+        r.title::TEXT AS title,
         r.description AS summary,
         NULL::TEXT AS content,
         r.created_at,
