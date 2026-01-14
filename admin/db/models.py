@@ -429,12 +429,12 @@ class AdminUser(DjangoModelAdmin):
     exclude = ("password",)
 
     def authenticate(self, username, password):
-        print(user)
         user = Admin.objects.filter(email=username).first()
         if not user:
             return None
         if not user.check_password(password):
             return None
+        print("authenticated_user", user.id)
         return user.id
 
 
@@ -593,7 +593,7 @@ class ResourceAdmin(DjangoModelAdmin):
         user_id = get_current_user_id()
         if not user_id:
             raise RuntimeError("User context missing")
-        print("this is the user id")
+        print("this is the user id", user_id)
         rb = self.decode_data_url(base64)
         # get_current_user_from_request()
 

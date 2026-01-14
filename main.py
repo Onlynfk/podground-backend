@@ -1,7 +1,6 @@
 import os
 import re
 from uuid import UUID
-from fastadmin.settings import settings
 from decouple import config
 
 from dotenv import load_dotenv
@@ -497,13 +496,14 @@ async def user_context_middleware(request: Request, call_next):
     admin_key = config("ADMIN_SECRET_KEY", default="e238sdj9293d")
     if session_id:
         try:
-            print(session_id, settings.__dict__)
             payload = jwt.decode(
                 session_id,
                 admin_key,
                 algorithms=["HS256"],
             )
+            print(payload)
             token = current_user_id.set(payload.get("user_id"))
+            print(token)
         except jwt.PyJWTError:
             token = current_user_id.set(None)
 
