@@ -1,5 +1,4 @@
-CREATE OR REPLACE FUNCTION public.get_blogs_by_category(
-    p_category_id UUID,
+CREATE OR REPLACE FUNCTION public.get_blogs_with_categories(
     p_limit INT,
     p_offset INT
 )
@@ -21,7 +20,7 @@ BEGIN
     SELECT
         r.id,
         r.id::TEXT AS slug,
-        r.title::TEXT AS title,
+        r.title::TEXT as title,
         r.description AS summary,
         r.content::TEXT AS content,
         r.created_at,
@@ -31,10 +30,10 @@ BEGIN
                 SELECT json_agg(
                     json_build_object('id', bc.id, 'name', bc.name)
                 )
-                FROM blog_resource_categories brc2
+                FROM blog_resource_categories brc
                 JOIN blog_categories bc
-                  ON bc.id = brc2.category_id
-                WHERE brc2.resource_id = r.id
+                  ON brc.category_id = bc.id
+                WHERE brc.resource_id = r.id
             ),
             '[]'::JSON
         ),
@@ -42,12 +41,6 @@ BEGIN
     FROM resources r
     WHERE r.is_blog = TRUE
       AND r.type = 'article'
-      AND EXISTS (
-          SELECT 1
-          FROM blog_resource_categories brc1
-          WHERE brc1.resource_id = r.id
-            AND brc1.category_id = p_category_id
-      )
     ORDER BY r.created_at DESC
     LIMIT p_limit
     OFFSET p_offset;

@@ -944,16 +944,21 @@ class ResourcesService:
                 if c.get("blog_categories")
             ]
 
+            content = await article_content_service.get_article_content(
+                row["id"]
+            )
+
             return {
                 "id": row["id"],
                 "slug": str(row["id"]),
                 "title": row["title"],
                 "summary": row["description"][:100],
-                "content": row["description"],
+                "content": content,
                 "image_url": row["image_url"],
                 "author": row["author"] or "Podground Team",
                 "created_at": row["created_at"],
                 "categories": categories,
+                "is_featured": False,
             }
 
         except Exception as e:

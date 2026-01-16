@@ -1,4 +1,5 @@
 from typing import Any, Sequence
+from asgiref.sync import sync_to_async
 from django.http.request import HttpRequest
 from django.contrib.auth.models import (
     AbstractBaseUser,
@@ -18,6 +19,7 @@ from fastadmin import (
     ModelAdmin,
     register,
 )
+import article_content_service
 from context import get_current_user_id
 from decouple import config
 from fastadmin import (
@@ -32,8 +34,10 @@ from django.contrib import admin
 
 from auth_dependencies import get_current_user_from_request
 from media_service import MediaService
+from article_content_service import ArticleContentService
 
 media_service = MediaService()
+article_content_service = ArticleContentService()
 
 
 # general models needed
@@ -351,6 +355,7 @@ class Resource(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     title = models.CharField(max_length=500)
     description = models.TextField(blank=True, null=True)
+    content = models.TextField(blank=True, null=True)
     type = models.CharField(max_length=20, choices=RESOURCE_TYPES)
     url = models.URLField(blank=True, null=True)
     image_url = models.URLField(blank=True, null=True)
@@ -587,9 +592,47 @@ class ResourceAdmin(DjangoModelAdmin):
 
         return b64.b64decode(encoded)
 
+    async def save_model(
+        self, id: uuid.UUID | Any | None, payload: dict
+    ) -> Any:
+        """This method is used to save orm/db model object.
+
+        :params id: an id of object.
+        :params payload: a dict of payload.
+        :return: An object.
+        """
+        print("this is the payload: ", payload)
+        title = getattr(self.model_cls, "title", None)
+        is_blog = getattr(self.model_cls, "is_blog", None)
+
+        content = payload.get("content", "")
+        print(title, is_blog)
+
+        if content and len(content) == 0:
+            await article_content_service.upload_article_content(
+                title=title,
+                resource_id=self.model_cls.id,
+                author="The PodGround Team" if is_blog else "",
+                content=content,
+            )
+        elif content and len(content) > 0:
+            await article_content_service.update_article_content(
+                title=title,
+                resource_id=self.model_cls.id,
+                author="The PodGround Team",
+                content=content,
+            )
+        await super().save_model(id, payload)
+
     async def orm_save_upload_field(
         self, obj: Any, field: str, base64: str
     ) -> None:
+        if not base64:
+            return
+        if base64.startswith("http://") or base64.startswith("https://"):
+            setattr(obj, field, base64)
+            await sync_to_async(obj.save)(update_fields=[field])
+            return
         user_id = get_current_user_id()
         if not user_id:
             raise RuntimeError("User context missing")
@@ -605,11 +648,15 @@ class ResourceAdmin(DjangoModelAdmin):
             file=temp_file,
         )
 
-        media = await media_service.upload_media_files(
-            [upload_file], "550e8400-e29b-41d4-a716-446655440000"
+        media_response = await media_service.upload_media_files(
+            [upload_file], "aa80431a-5595-4d6c-aa5d-8fc93a87af82"
         )
-        print(media)
-        return super().orm_save_upload_field(obj, field, base64)
+        if media_response:
+            media = media_response.get("media", None)
+            if media:
+                file_url = media[0].get("url", None)
+                setattr(obj, field, file_url)
+                await sync_to_async(obj.save)(update_fields=[field])
 
 
 @register(Comment)

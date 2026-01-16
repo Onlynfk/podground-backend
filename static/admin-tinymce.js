@@ -24,7 +24,7 @@
   function initTinyMCE() {
     if (!window.tinymce) return;
 
-    const textarea = document.querySelector("#description");
+    const textarea = document.querySelector("#content");
 
     if (!textarea) return;
 
@@ -41,7 +41,7 @@
     }
 
     tinymce.init({
-      selector: "#description",
+      selector: "#content",
       menubar: false,
       height: 300,
       setup(editor) {
