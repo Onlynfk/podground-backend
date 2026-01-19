@@ -9,6 +9,7 @@ import logging
 import re
 import os
 
+from models import BlogCategory
 from supabase_client import get_supabase_client
 from access_control import get_user_subscription_status
 from article_content_service import article_content_service
@@ -908,6 +909,94 @@ class ResourcesService:
                 f"Error incrementing view count for resource {resource_id}: {str(e)}"
             )
             # Don't raise exception for non-critical operation
+
+    async def get_blog(self, blog_id: str):
+        try:
+            response = (
+                self.supabase.from_("resources")
+                .select(
+                    """
+                id,
+                title,
+                description,
+                image_url,
+                author,
+                created_at,
+                blog_resource_categories(
+                    blog_categories(
+                        id,
+                        name
+                    )
+                )
+            """
+                )
+                .eq("id", blog_id)
+                .eq("is_blog", True)
+                .single()
+                .execute()
+            )
+
+            row = response.data
+
+            categories = [
+                c["blog_categories"]
+                for c in row.get("blog_resource_categories", [])
+                if c.get("blog_categories")
+            ]
+
+            content = await article_content_service.get_article_content(
+                row["id"]
+            )
+
+            return {
+                "id": row["id"],
+                "slug": str(row["id"]),
+                "title": row["title"],
+                "summary": row["description"][:100],
+                "content": content,
+                "image_url": row["image_url"],
+                "author": row["author"] or "Podground Team",
+                "created_at": row["created_at"],
+                "categories": categories,
+                "is_featured": False,
+            }
+
+        except Exception as e:
+            raise e
+
+    async def get_all_blog_categories(self):
+        """
+        Fetches all blog categories from the database
+        """
+
+        try:
+            if not self.supabase_client.service_client:
+                logger.error(
+                    "Supabase service not available. Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables"
+                )
+            result = (
+                self.supabase_client.service_client.table("blog_categories")
+                .select("id", "name")
+                .execute()
+            )
+
+            categories = result.data
+
+            if not categories:
+                return []
+
+            blog_categories = [
+                BlogCategory(id=item["id"], name=item["name"])
+                for item in categories
+            ]
+
+            return blog_categories
+
+        except Exception as e:
+            logger.error(
+                f"Error fetching blog categories from database: {str(e)}"
+            )
+            return []
 
 
 resources_service = ResourcesService()

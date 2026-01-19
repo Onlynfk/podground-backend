@@ -451,7 +451,12 @@ class CreatePortalSessionResponse(BaseModel):
 class SubscriptionStatus(BaseModel):
     has_subscription: bool
     subscription_type: Optional[Literal["recurring", "lifetime"]] = None
-    status: Optional[str] = None  # active, canceled, past_due, lifetime_active, etc.
+    status: Optional[str] = (
+        None  # active, canceled, past_due, lifetime_active, etc.
+    )
+    plan: Optional[Literal["free", "pro_monthly", "lifetime"]] = (
+        "free"  # User-friendly plan name
+    )
     plan_id: Optional[str] = None
     current_period_end: Optional[datetime] = None
     cancel_at_period_end: Optional[bool] = None
@@ -462,6 +467,20 @@ class SubscriptionStatus(BaseModel):
 class SubscriptionStatusResponse(BaseModel):
     success: bool
     subscription: Optional[SubscriptionStatus] = None
+    error: Optional[str] = None
+
+
+class VerifySessionResponse(BaseModel):
+    success: bool
+    payment_status: Optional[str] = (
+        None  # "paid", "unpaid", "no_payment_required"
+    )
+    customer_email: Optional[str] = None
+    amount_total: Optional[int] = None  # in cents
+    currency: Optional[str] = None
+    subscription_id: Optional[str] = None  # For recurring subscriptions
+    payment_intent_id: Optional[str] = None  # For one-time payments
+    plan_type: Optional[Literal["pro_monthly", "lifetime"]] = None
     error: Optional[str] = None
 
 
@@ -481,7 +500,8 @@ class BlogResponse(BaseModel):
     author: str
     created_at: Optional[str] = None
     categories: List[BlogCategory] = []
-    image_url: str
+    image_url: Optional[str] = None
+    is_featured: bool
 
 
 class BlogsResponse(BaseModel):

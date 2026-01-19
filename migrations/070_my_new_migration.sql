@@ -1,7 +1,0 @@
--- Add your SQL migration statements here
--- For example:
--- ALTER TABLE your_table ADD COLUMN new_column VARCHAR(255);
--- CREATE TABLE new_table (
---    id SERIAL PRIMARY KEY,
---    name VARCHAR(255) NOT NULL
--- );

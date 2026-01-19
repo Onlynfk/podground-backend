@@ -1,7 +1,10 @@
 import os
 import re
 from uuid import UUID
+from decouple import config
+
 from dotenv import load_dotenv
+from fastapi.staticfiles import StaticFiles
 
 # Load environment variables FIRST before any other imports
 load_dotenv()
@@ -9,42 +12,39 @@ load_dotenv()
 # Debug: Print FRONTEND_URL to verify it's loaded
 print(f"DEBUG: FRONTEND_URL from environment: {os.getenv('FRONTEND_URL')}")
 
+import ipaddress
+import logging
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List
+from context import current_user_id
+import django
+import jwt
+import requests
+from disposable_email_domains import blocklist
+from fastadmin import fastapi_app as admin_app
 from fastapi import (
-    FastAPI,
     Depends,
+    FastAPI,
+    File,
+    Form,
     HTTPException,
+    Query,
     Request,
     Response,
-    status,
-    File,
     UploadFile,
-    Query,
-    Form,
 )
-from pydantic import Field
-from typing import List, Dict, Any
-import ipaddress
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import (
-    JSONResponse,
-    FileResponse,
-    StreamingResponse,
-    RedirectResponse,
-    Response,
-)
-from starlette.middleware.sessions import SessionMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
-from sqlalchemy.orm import Session
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-from contextlib import asynccontextmanager
-import jwt
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from jwt.exceptions import InvalidTokenError
-from datetime import datetime, timedelta, timezone
-import requests
-import logging
-from disposable_email_domains import blocklist
+from pydantic import Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+from sqlalchemy.orm import Session
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.sessions import SessionMiddleware
+
 from scheduler_service import scheduler_service
 
 
@@ -68,143 +68,103 @@ class SuppressH11ProtocolErrorFilter(logging.Filter):
 logging.getLogger("uvicorn.error").addFilter(SuppressH11ProtocolErrorFilter())
 logging.getLogger().addFilter(SuppressH11ProtocolErrorFilter())
 
-from database import get_db, create_tables, init_ab_counter, ABCounter
-from refresh_token_manager import RefreshTokenManager
-from models import (
-    WaitlistRequest,
-    WaitlistResponse,
-    MicrograntWaitlistRequest,
-    MicrograntWaitlistResponse,
+import os
+from typing import Optional
+
+from access_control import init_access_control
+from customerio_client import CustomerIOClient
+from database import ABCounter, create_tables, get_db, init_ab_counter
+from episode_listen_service import EpisodeListenService
+from events_service import events_service
+from featured_content_service import FeaturedContentService
+from feed_cache_service import get_feed_cache_service
+from listennotes_client import ListenNotesClient
+from media_service import MediaService
+from messages_service import MessagesService
+from models import (  # Post models; Blog post models; Subscription models; Global Search models; Stripe models; Episode Listen models; Base model for new request classes
     ABVariantResponse,
-    TokenResponse,
-    SignUpRequest,
-    SignInRequest,
-    ResendMagicLinkRequest,
-    CodeExchangeRequest,
-    CodeExchangeResponse,
     AuthResponse,
-    PodcastSearchResults,
-    VerifyClaimByCodeRequest,
-    ClaimResponse,
-    OnboardingRequest,
-    OnboardingResponse,
-    CategoryResponse,
-    NetworkResponse,
-    OnboardingStatusResponse,
-    OnboardingProfileResponse,
-    PodcastClaimData,
-    OnboardingStepRequest,
-    PodcastCategoriesResponse,
-    PodcastCategoryData,
-    StateCountryData,
-    StatesCountriesResponse,
-    VerifyCodeRequest,
-    UserStatusResponse,
-    # Post models
-    CreatePostRequest,
-    UpdatePostRequest,
-    CreateCommentRequest,
-    EditCommentRequest,
-    PostResponse,
-    FeedResponse,
-    CommentsResponse,
-    ConnectionActionRequest,
-    ConnectionListResponse,
-    TopicsResponse,
-    ResourcesResponse,
-    EventsResponse,
-    # Subscription models
-    SubscriptionPlansResponse,
-    UserSubscriptionResponse,
-    CreateSubscriptionRequest,
-    UpdateSubscriptionRequest,
-    AssignRoleRequest,
-    # User Profile models
-    UpdateProfileRequest,
-    UserProfileResponse,
-    AvatarUploadResponse,
-    TopicResponse,
-    UserInterestResponse,
-    UpdateInterestsRequest,
-    AddInterestRequest,
-    ConnectionUserData,
-    ConnectionResponse,
-    ConnectionRequestResponse,
-    ConnectionsListResponse,
-    ConnectionStatusResponse,
-    ActivityResponse,
-    ActivityFeedResponse,
-    ActivityStatsResponse,
-    # Message Media models
-    MessageMediaData,
-    SendMessageWithMediaRequest,
-    MessageMediaUploadResponse,
-    # Refresh Session models
-    RefreshSessionRequest,
-    RefreshSessionResponse,
-    # Global Search models
-    GlobalSearchResponse,
-    # Stripe models
-    CreateCheckoutSessionRequest,
-    CreateCheckoutSessionResponse,
-    CreatePortalSessionRequest,
-    CreatePortalSessionResponse,
-    SubscriptionStatus,
-    SubscriptionStatusResponse,
-    # Episode Listen models
-    RecordEpisodeListenResponse,
-    # Base model for new request classes
     BaseModel,
+    BlogCategory,
     BlogResponse,
     BlogsResponse,
-    ResourceCategoryResponse,
+    ClaimResponse,
+    CodeExchangeRequest,
+    CodeExchangeResponse,
+    ConnectionActionRequest,
+    ConnectionListResponse,
+    CreateCheckoutSessionRequest,
+    CreateCheckoutSessionResponse,
+    CreateCommentRequest,
+    CreatePortalSessionRequest,
+    CreatePortalSessionResponse,
+    CreatePostRequest,
+    CreateSubscriptionRequest,
+    EditCommentRequest,
+    EventsResponse,
+    FeedResponse,
+    GlobalSearchResponse,
+    MicrograntWaitlistRequest,
+    MicrograntWaitlistResponse,
+    NetworkResponse,
+    OnboardingProfileResponse,
+    OnboardingRequest,
+    OnboardingResponse,
+    OnboardingStatusResponse,
+    OnboardingStepRequest,
+    PodcastSearchResults,
+    PostResponse,
+    RecordEpisodeListenResponse,
+    RefreshSessionResponse,
+    ResendMagicLinkRequest,
+    ResourcesResponse,
+    SignInRequest,
+    SignUpRequest,
+    SubscriptionPlansResponse,
+    SubscriptionStatus,
+    SubscriptionStatusResponse,
+    TokenResponse,
+    UpdatePostRequest,
+    UpdateProfileRequest,
+    UpdateSubscriptionRequest,
+    UserStatusResponse,
+    UserSubscriptionResponse,
+    VerifyClaimByCodeRequest,
+    VerifyCodeRequest,
+    VerifySessionResponse,
+    WaitlistRequest,
+    WaitlistResponse,
 )
+from notification_service import NotificationService, notification_manager
+from podcast_endpoints import router as podcast_router
+from podcast_service import PodcastDiscoveryService
+from post_endpoints import router as post_router
 from post_models import (
+    CreateGrantApplicationRequest,
+    CreateGrantApplicationResponse,
     CreateResourceRequest,
     ResourceResponse,
-    AddReactionRequest,
-    PostReactionsResponse,
-    CreateGrantApplicationRequest,
-    CreateGrantApplicationResponse
 )
-from customerio_client import CustomerIOClient
-from supabase_client import SupabaseClient, get_supabase_client
-from listennotes_client import ListenNotesClient
-from podcast_endpoints import router as podcast_router
-from post_endpoints import router as post_router
-from jwt_utils import get_user_email_from_token
-from security_utils import sanitize_for_log, sanitize_name, validate_search_query
+from refresh_token_manager import RefreshTokenManager
+from resource_interaction_service import get_resource_interaction_service
+from resource_pdf_service import resource_pdf_service
+from resources_service import resources_service
+from rss_parser import RSSFeedParser
 from security_middleware import (
-    SecurityHeadersMiddleware,
     RateLimitHeadersMiddleware,
     RequestValidationMiddleware,
+    SecurityHeadersMiddleware,
 )
-from media_service import MediaService
-from rss_parser import RSSFeedParser
-from typing import Optional
-from access_control import (
-    init_access_control,
-    get_access_control_dependency,
-    require_role,
-    require_subscription,
-    require_premium_access,
-)
-from resources_service import resources_service
-from events_service import events_service
-from podcast_service import PodcastDiscoveryService
-from user_listening_service import UserListeningService
-from episode_listen_service import EpisodeListenService
-from featured_content_service import FeaturedContentService
-from messages_service import MessagesService
-from resource_pdf_service import resource_pdf_service
-from user_profile_service import UserProfileService
-from user_interests_service import get_user_interests_service
-from user_connections_service import get_user_connections_service
+from security_utils import sanitize_for_log, sanitize_name, validate_search_query
+from supabase_client import SupabaseClient, get_supabase_client
 from user_activity_service import get_user_activity_service
-from feed_cache_service import get_feed_cache_service
+from user_connections_service import get_user_connections_service
+from user_listening_service import UserListeningService
+from user_profile_service import UserProfileService
 from user_settings_service import get_user_settings_service
-from notification_service import NotificationService, notification_manager
-from resource_interaction_service import get_resource_interaction_service
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "admin.settings")
+django.setup()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -212,7 +172,6 @@ logger = logging.getLogger(__name__)
 
 # Suppress harmless h11 LocalProtocolError exceptions in asyncio
 import asyncio
-import sys
 
 
 def suppress_h11_errors(loop, context):
@@ -294,6 +253,13 @@ async def h11_protocol_error_handler(request: Request, exc: LocalProtocolError):
 
 app.add_exception_handler(LocalProtocolError, h11_protocol_error_handler)
 
+
+app.mount(
+    "/static",
+    StaticFiles(directory="static"),
+    name="static",
+)
+
 # Session middleware (add before other middleware)
 session_secret = os.getenv("SESSION_SECRET_KEY", "your-secret-key-change-in-production")
 session_hours = int(os.getenv("SESSION_MAX_AGE_HOURS", "24"))  # Default 24 hours
@@ -335,13 +301,13 @@ class SessionCookieMiddleware(BaseHTTPMiddleware):
                 cookie_secure = False  # Can't use Secure with HTTP origins
                 cookie_samesite = None  # No SameSite attribute for cross-origin HTTP
                 logger.info(
-                    f"HTTP localhost detected: using permissive session cookies (no samesite)"
+                    "HTTP localhost detected: using permissive session cookies (no samesite)"
                 )
             else:
                 # HTTPS origins: use strict cross-origin settings
                 cookie_secure = True
                 cookie_samesite = "none"
-                logger.info(f"HTTPS origin detected: using none session cookies")
+                logger.info("HTTPS origin detected: using none session cookies")
 
             logger.info(
                 f"Session cookie settings: origin={origin}, secure={cookie_secure}, samesite={cookie_samesite}"
@@ -409,6 +375,7 @@ app.add_middleware(
     same_site="lax",  # Default, will be overridden by custom middleware
     https_only=False,  # Default, will be overridden by custom middleware
 )
+
 
 # Enable custom session cookie middleware for cross-origin support
 app.add_middleware(SessionCookieMiddleware)
@@ -494,7 +461,9 @@ environment = os.getenv("ENVIRONMENT", "dev")
 if environment in ["dev", "development"]:
     if "null" not in allowed_origins:
         allowed_origins.append("null")
-        logger.warning("CORS: Allowing 'null' origin for local file:// testing (development only)")
+        logger.warning(
+            "CORS: Allowing 'null' origin for local file:// testing (development only)"
+        )
 
 # Allow Netlify deployments (for testing)
 # Note: We'll allow all Netlify domains since they change with each deployment
@@ -518,6 +487,33 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+@app.middleware("http")
+async def user_context_middleware(request: Request, call_next):
+    token = None
+
+    session_id = request.cookies.get("admin_session_id")
+    admin_key = config("ADMIN_SECRET_KEY", default="e238sdj9293d")
+    if session_id:
+        try:
+            payload = jwt.decode(
+                session_id,
+                admin_key,
+                algorithms=["HS256"],
+            )
+            print(payload)
+            token = current_user_id.set(payload.get("user_id"))
+            print(token)
+        except jwt.PyJWTError:
+            token = current_user_id.set(None)
+
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        if token is not None:
+            current_user_id.reset(token)
+
 
 # Initialize clients
 customerio_client = CustomerIOClient()
@@ -701,7 +697,7 @@ def get_current_user_from_session(request: Request) -> str:
                     del app.state.session_tokens[token]
                     logger.warning("Bearer token expired")
             else:
-                logger.warning(f"Bearer token not found or invalid")
+                logger.warning("Bearer token not found or invalid")
 
     if not user_id:
         logger.warning(
@@ -798,7 +794,7 @@ def verify_captcha(token: str) -> bool:
             return True
 
         return False
-    except Exception as e:
+    except Exception:
         return False
 
 
@@ -1157,7 +1153,7 @@ async def signup(signup_data: SignUpRequest, request: Request):
         # Frontend will extract token from hash and call backend
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
         redirect_url = f"{frontend_url}/auth/callback"
-        
+
         # Step 1: Create user in Supabase without sending email
         result = supabase_client.create_user_without_email(
             signup_data.email, sanitized_name
@@ -1308,11 +1304,15 @@ async def verify_code_for_session(
                     status_code=400, detail="Invalid or expired verification code"
                 )
             else:
-                raise HTTPException(status_code=500, detail=f"Verification failed: {error_msg}")
+                raise HTTPException(
+                    status_code=500, detail=f"Verification failed: {error_msg}"
+                )
 
         user_id = result.get("user_id")
         if not user_id:
-            raise HTTPException(status_code=500, detail="Failed to get user ID from verification")
+            raise HTTPException(
+                status_code=500, detail="Failed to get user ID from verification"
+            )
 
         user_email = verify_data.email
         logger.info(f"Code verification successful for user {user_id}")
@@ -1353,27 +1353,37 @@ async def verify_code_for_session(
             # Mark signup as confirmed
             confirmation_result = supabase_client.mark_signup_confirmed(user_id)
             if confirmation_result["success"]:
-                logger.info(f"Marked signup confirmed via 6-digit code for user {user_id}")
+                logger.info(
+                    f"Marked signup confirmed via 6-digit code for user {user_id}"
+                )
 
                 # Add signup_confirmed attribute to Customer.io
                 try:
                     customerio_result = customerio_client.update_user_attributes(
                         user_id=user_id,
                         email=user_email,
-                        attributes={"signup_confirmed": True}
+                        attributes={"signup_confirmed": True},
                     )
                     if customerio_result["success"]:
-                        logger.info(f"Customer.io: Added signup_confirmed attribute for {user_email}")
+                        logger.info(
+                            f"Customer.io: Added signup_confirmed attribute for {user_email}"
+                        )
                     else:
-                        logger.warning(f"Customer.io: Failed to add signup_confirmed: {customerio_result.get('error')}")
+                        logger.warning(
+                            f"Customer.io: Failed to add signup_confirmed: {customerio_result.get('error')}"
+                        )
                 except Exception as e:
-                    logger.warning(f"Customer.io signup_confirmed tracking error (non-fatal): {str(e)}")
+                    logger.warning(
+                        f"Customer.io signup_confirmed tracking error (non-fatal): {str(e)}"
+                    )
             else:
                 logger.warning(
                     f"Failed to mark signup confirmed: {confirmation_result.get('error')}"
                 )
         except Exception as e:
-            logger.warning(f"Signup confirmation error (non-fatal): {str(e)}", exc_info=True)
+            logger.warning(
+                f"Signup confirmation error (non-fatal): {str(e)}", exc_info=True
+            )
 
         # Mark first login
         try:
@@ -1387,26 +1397,37 @@ async def verify_code_for_session(
 
         # Invalidate episode cache for user's favorite podcasts on sign-in
         try:
-            favorite_podcasts = await podcast_service.get_user_favorite_podcasts(user_id)
+            favorite_podcasts = await podcast_service.get_user_favorite_podcasts(
+                user_id
+            )
             if favorite_podcasts:
                 invalidated_count = 0
                 for podcast in favorite_podcasts:
-                    podcast_id = podcast.get('id')
+                    podcast_id = podcast.get("id")
                     if podcast_id:
                         podcast_service.episode_cache.invalidate_podcast(podcast_id)
                         invalidated_count += 1
-                logger.info(f"Invalidated episode cache for {invalidated_count} favorite podcasts on user sign-in: {user_id}")
+                logger.info(
+                    f"Invalidated episode cache for {invalidated_count} favorite podcasts on user sign-in: {user_id}"
+                )
         except Exception as e:
-            logger.warning(f"Failed to invalidate episode cache on sign-in (non-fatal): {str(e)}", exc_info=True)
+            logger.warning(
+                f"Failed to invalidate episode cache on sign-in (non-fatal): {str(e)}",
+                exc_info=True,
+            )
 
         # Invalidate user profile cache on sign-in to fetch fresh data
         try:
             from user_profile_cache_service import get_user_profile_cache_service
+
             profile_cache = get_user_profile_cache_service()
             profile_cache.invalidate(user_id)
             logger.info(f"Invalidated user profile cache on sign-in: {user_id}")
         except Exception as e:
-            logger.warning(f"Failed to invalidate profile cache on sign-in (non-fatal): {str(e)}", exc_info=True)
+            logger.warning(
+                f"Failed to invalidate profile cache on sign-in (non-fatal): {str(e)}",
+                exc_info=True,
+            )
 
         # Create 90-day refresh token for persistent login
         try:
@@ -1528,10 +1549,10 @@ async def signin(signin_data: SignInRequest, request: Request):
             first_name = user.user_metadata.get("first_name", "")
             last_name = user.user_metadata.get("last_name", "")
             user_name = f"{first_name} {last_name}".strip()
-        
-        if not user_name and hasattr(user, 'email'):
-            user_name = user.email.split('@')[0]  # Fallback to email username
-        
+
+        if not user_name and hasattr(user, "email"):
+            user_name = user.email.split("@")[0]  # Fallback to email username
+
         # Get URLs for redirect - use frontend callback (admin.generate_link doesn't support PKCE)
         # Frontend will extract token from hash and call backend
         frontend_url = os.getenv("FRONTEND_URL")
@@ -1610,10 +1631,10 @@ async def resend_auth_credentials(
             first_name = user.user_metadata.get("first_name", "")
             last_name = user.user_metadata.get("last_name", "")
             user_name = f"{first_name} {last_name}".strip()
-        
-        if not user_name and hasattr(user, 'email'):
-            user_name = user.email.split('@')[0]  # Fallback to email username
-        
+
+        if not user_name and hasattr(user, "email"):
+            user_name = user.email.split("@")[0]  # Fallback to email username
+
         # Get URLs for redirect - use frontend callback (admin.generate_link doesn't support PKCE)
         # Frontend will extract token from hash and call backend
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
@@ -1649,16 +1670,18 @@ async def resend_auth_credentials(
                 email=resend_data.email,
                 name=user_name,
                 magic_link_url=magic_link_url,
-                verification_code=short_code
+                verification_code=short_code,
             )
             message_text = f"We just sent a new login link and verification code to {resend_data.email}"
         else:
             # User not confirmed yet - send full signup confirmation with verification code
-            customerio_result = customerio_client.send_signup_confirmation_transactional(
-                email=resend_data.email,
-                name=user_name,
-                magic_link_url=magic_link_url,
-                verification_code=short_code
+            customerio_result = (
+                customerio_client.send_signup_confirmation_transactional(
+                    email=resend_data.email,
+                    name=user_name,
+                    magic_link_url=magic_link_url,
+                    verification_code=short_code,
+                )
             )
             message_text = f"We just sent a new login url and verification code to {resend_data.email}"
 
@@ -1771,21 +1794,29 @@ async def exchange_code_for_session(
             # Now mark signup as confirmed
             confirmation_result = supabase_client.mark_signup_confirmed(user_id)
             if confirmation_result["success"]:
-                logger.info(f"Marked signup confirmed via JWT token exchange for user {user_id}")
+                logger.info(
+                    f"Marked signup confirmed via JWT token exchange for user {user_id}"
+                )
 
                 # Add signup_confirmed attribute to Customer.io
                 try:
                     customerio_result = customerio_client.update_user_attributes(
                         user_id=user_id,
                         email=user_email,
-                        attributes={"signup_confirmed": True}
+                        attributes={"signup_confirmed": True},
                     )
                     if customerio_result["success"]:
-                        logger.info(f"Customer.io: Added signup_confirmed attribute for {user_email}")
+                        logger.info(
+                            f"Customer.io: Added signup_confirmed attribute for {user_email}"
+                        )
                     else:
-                        logger.warning(f"Customer.io: Failed to add signup_confirmed: {customerio_result.get('error')}")
+                        logger.warning(
+                            f"Customer.io: Failed to add signup_confirmed: {customerio_result.get('error')}"
+                        )
                 except Exception as e:
-                    logger.warning(f"Customer.io signup_confirmed tracking error (non-fatal): {str(e)}")
+                    logger.warning(
+                        f"Customer.io signup_confirmed tracking error (non-fatal): {str(e)}"
+                    )
             else:
                 logger.warning(
                     f"Failed to mark signup confirmed: {confirmation_result.get('error')}"
@@ -1883,7 +1914,7 @@ async def refresh_user_session(
         # Debug: Log all cookies and headers
         logger.info(f"All cookies received: {dict(request.cookies)}")
         logger.info(f"Cookie count: {len(request.cookies)}")
-        logger.info(f"Request headers:")
+        logger.info("Request headers:")
         logger.info(f"  - Origin: {request.headers.get('origin')}")
         logger.info(f"  - Referer: {request.headers.get('referer')}")
         logger.info(f"  - Cookie header present: {'cookie' in request.headers}")
@@ -1892,7 +1923,7 @@ async def refresh_user_session(
         if not refresh_token:
             logger.warning("❌ No refresh token found in cookies")
             logger.warning(f"Available cookie keys: {list(request.cookies.keys())}")
-            return RefreshSessionResponse(ok=False, error="No refresh token found")
+            raise HTTPException(status_code=401, detail="No refresh token found")
 
         # Validate refresh token
         logger.info(f"Validating refresh token (length: {len(refresh_token)})")
@@ -1902,8 +1933,8 @@ async def refresh_user_session(
             logger.warning("❌ Invalid or expired refresh token")
             # Clear invalid cookie
             response.delete_cookie("refresh_token")
-            return RefreshSessionResponse(
-                ok=False, error="Invalid or expired refresh token"
+            raise HTTPException(
+                status_code=401, detail="Invalid or expired refresh token"
             )
 
         user_id = token_info["user_id"]
@@ -1918,12 +1949,12 @@ async def refresh_user_session(
             )
             if not user_data or not user_data.user:
                 logger.error(f"❌ User not found in Supabase: {user_id}")
-                return RefreshSessionResponse(ok=False, error="User not found")
+                raise HTTPException(status_code=401, detail="User not found")
             user_email = user_data.user.email
             logger.info(f"✅ User data retrieved: {user_email}")
         except Exception as e:
             logger.error(f"❌ Failed to get user data: {str(e)}")
-            return RefreshSessionResponse(ok=False, error="Failed to validate user")
+            raise HTTPException(status_code=401, detail="Failed to validate user")
 
         # Create new session
         logger.info("Creating new session")
@@ -1992,14 +2023,19 @@ async def refresh_user_session(
         logger.info("=" * 60)
         return RefreshSessionResponse(ok=True, message="Session refreshed successfully")
 
+    except HTTPException:
+        # Re-raise HTTP exceptions (401 errors)
+        raise
     except Exception as e:
         logger.error(f"❌ Session refresh error: {str(e)}")
         logger.error("=" * 60)
-        return RefreshSessionResponse(ok=False, error="Internal server error")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/v1/auth/callback", tags=["Authentication"])
-async def auth_callback(request: Request, response: Response, db: Session = Depends(get_db)):
+async def auth_callback(
+    request: Request, response: Response, db: Session = Depends(get_db)
+):
     """Handle magic link callback - exchange access token for session"""
 
     try:
@@ -2019,7 +2055,9 @@ async def auth_callback(request: Request, response: Response, db: Session = Depe
         result = supabase_client.exchange_code_for_session(access_token)
 
         if not result["success"]:
-            logger.warning(f"Token validation failed in callback: {result.get('error')}")
+            logger.warning(
+                f"Token validation failed in callback: {result.get('error')}"
+            )
             return {"success": False, "error": "Token validation failed"}
 
         user = result["user"]
@@ -2041,12 +2079,10 @@ async def auth_callback(request: Request, response: Response, db: Session = Depe
             if not existing_tracking["success"] or not existing_tracking.get("data"):
                 user_name = f"{user.user_metadata.get('first_name', '')} {user.user_metadata.get('last_name', '')}".strip()
                 if not user_name:
-                    user_name = user_email.split('@')[0]
+                    user_name = user_email.split("@")[0]
 
                 tracking_result = supabase_client.create_signup_tracking(
-                    user_id=user_id,
-                    email=user_email,
-                    name=user_name
+                    user_id=user_id, email=user_email, name=user_name
                 )
                 if tracking_result["success"]:
                     logger.info(f"Created signup tracking for user {user_id}")
@@ -2054,21 +2090,29 @@ async def auth_callback(request: Request, response: Response, db: Session = Depe
             # Mark signup confirmed
             confirmation_result = supabase_client.mark_signup_confirmed(user_id)
             if confirmation_result.get("success"):
-                logger.info(f"Marked signup confirmed via auth callback for user {user_id}")
+                logger.info(
+                    f"Marked signup confirmed via auth callback for user {user_id}"
+                )
 
                 # Add signup_confirmed attribute to Customer.io
                 try:
                     customerio_result = customerio_client.update_user_attributes(
                         user_id=user_id,
                         email=user_email,
-                        attributes={"signup_confirmed": True}
+                        attributes={"signup_confirmed": True},
                     )
                     if customerio_result["success"]:
-                        logger.info(f"Customer.io: Added signup_confirmed attribute for {user_email}")
+                        logger.info(
+                            f"Customer.io: Added signup_confirmed attribute for {user_email}"
+                        )
                     else:
-                        logger.warning(f"Customer.io: Failed to add signup_confirmed: {customerio_result.get('error')}")
+                        logger.warning(
+                            f"Customer.io: Failed to add signup_confirmed: {customerio_result.get('error')}"
+                        )
                 except Exception as e:
-                    logger.warning(f"Customer.io signup_confirmed tracking error (non-fatal): {str(e)}")
+                    logger.warning(
+                        f"Customer.io signup_confirmed tracking error (non-fatal): {str(e)}"
+                    )
 
             # Mark first login
             supabase_client.mark_first_login(user_id)
@@ -2077,10 +2121,12 @@ async def auth_callback(request: Request, response: Response, db: Session = Depe
 
         # Invalidate caches (same as verify-code endpoint)
         try:
-            favorite_podcasts = await podcast_service.get_user_favorite_podcasts(user_id)
+            favorite_podcasts = await podcast_service.get_user_favorite_podcasts(
+                user_id
+            )
             if favorite_podcasts:
                 for podcast in favorite_podcasts:
-                    podcast_id = podcast.get('id')
+                    podcast_id = podcast.get("id")
                     if podcast_id:
                         podcast_service.episode_cache.invalidate_podcast(podcast_id)
         except Exception as e:
@@ -2088,6 +2134,7 @@ async def auth_callback(request: Request, response: Response, db: Session = Depe
 
         try:
             from user_profile_cache_service import get_user_profile_cache_service
+
             profile_cache = get_user_profile_cache_service()
             profile_cache.invalidate(user_id)
         except Exception as e:
@@ -2103,7 +2150,7 @@ async def auth_callback(request: Request, response: Response, db: Session = Depe
                 user_id=user_id,
                 user_agent=user_agent,
                 ip_address=ip_address,
-                days_valid=90
+                days_valid=90,
             )
 
             # Set refresh token cookie with appropriate security settings
@@ -2112,8 +2159,8 @@ async def auth_callback(request: Request, response: Response, db: Session = Depe
             # Determine cookie security settings based on origin
             origin = request.headers.get("origin")
             is_localhost_request = origin and (
-                origin.startswith("http://localhost") or
-                origin.startswith("http://127.0.0.1")
+                origin.startswith("http://localhost")
+                or origin.startswith("http://127.0.0.1")
             )
 
             if is_localhost_request:
@@ -2130,9 +2177,11 @@ async def auth_callback(request: Request, response: Response, db: Session = Depe
                 httponly=True,
                 secure=cookie_secure,
                 samesite=cookie_samesite,
-                domain=None
+                domain=None,
             )
-            logger.info(f"Set refresh token cookie for user {user_id} (secure={cookie_secure}, samesite={cookie_samesite})")
+            logger.info(
+                f"Set refresh token cookie for user {user_id} (secure={cookie_secure}, samesite={cookie_samesite})"
+            )
         except Exception as e:
             logger.warning(f"Failed to create refresh token (non-fatal): {str(e)}")
 
@@ -2146,11 +2195,15 @@ async def auth_callback(request: Request, response: Response, db: Session = Depe
             onboarding_completed = False
 
             if onboarding_result["success"] and onboarding_result["data"]:
-                onboarding_data = onboarding_result["data"][0] if onboarding_result["data"] else {}
+                onboarding_data = (
+                    onboarding_result["data"][0] if onboarding_result["data"] else {}
+                )
                 onboarding_completed = onboarding_data.get("is_completed", False)
 
             # 2. Get podcast claim status
-            podcast_claims_result = supabase_client.get_user_podcast_claims_session(user_id)
+            podcast_claims_result = supabase_client.get_user_podcast_claims_session(
+                user_id
+            )
             podcast_claimed = False
 
             if podcast_claims_result["success"] and podcast_claims_result["data"]:
@@ -2163,7 +2216,9 @@ async def auth_callback(request: Request, response: Response, db: Session = Depe
             # 3. Apply redirect logic
             if not podcast_claimed and not onboarding_completed:
                 redirect_path = "/claim-podcast"
-                logger.info(f"User {user_id} → /claim-podcast (no claim, no onboarding)")
+                logger.info(
+                    f"User {user_id} → /claim-podcast (no claim, no onboarding)"
+                )
             elif podcast_claimed and not onboarding_completed:
                 redirect_path = "/onboarding"
                 logger.info(f"User {user_id} → /onboarding (claimed, needs onboarding)")
@@ -2173,17 +2228,17 @@ async def auth_callback(request: Request, response: Response, db: Session = Depe
             else:
                 # Edge case: no claim but onboarding complete - still send to claim
                 redirect_path = "/claim-podcast"
-                logger.info(f"User {user_id} → /claim-podcast (edge case: onboarded but no claim)")
+                logger.info(
+                    f"User {user_id} → /claim-podcast (edge case: onboarded but no claim)"
+                )
 
         except Exception as e:
-            logger.warning(f"Failed to determine user status (defaulting to claim-podcast): {str(e)}")
+            logger.warning(
+                f"Failed to determine user status (defaulting to claim-podcast): {str(e)}"
+            )
             redirect_path = "/claim-podcast"
 
-        return {
-            "success": True,
-            "redirect_path": redirect_path,
-            "user_id": user_id
-        }
+        return {"success": True, "redirect_path": redirect_path, "user_id": user_id}
 
     except Exception as e:
         logger.error(f"Auth callback error: {str(e)}")
@@ -2776,14 +2831,20 @@ async def verify_podcast_claim_by_code(
                     customerio_result = customerio_client.update_user_attributes(
                         user_id=user_id,
                         email=user_email,
-                        attributes={"verified_podcast": True}
+                        attributes={"verified_podcast": True},
                     )
                     if customerio_result["success"]:
-                        logger.info(f"Customer.io: Added verified_podcast attribute for {user_email}")
+                        logger.info(
+                            f"Customer.io: Added verified_podcast attribute for {user_email}"
+                        )
                     else:
-                        logger.warning(f"Customer.io: Failed to add verified_podcast: {customerio_result.get('error')}")
+                        logger.warning(
+                            f"Customer.io: Failed to add verified_podcast: {customerio_result.get('error')}"
+                        )
                 except Exception as e:
-                    logger.warning(f"Customer.io verified_podcast tracking error (non-fatal): {str(e)}")
+                    logger.warning(
+                        f"Customer.io verified_podcast tracking error (non-fatal): {str(e)}"
+                    )
 
             # Send success notification
             if user_email:
@@ -3291,22 +3352,34 @@ async def save_onboarding_step(
                 status_code=400, detail="favorite_podcast_ids is required for step 5"
             )
         if not isinstance(step_data.data.get("favorite_podcast_ids"), list):
-            raise HTTPException(status_code=400, detail="favorite_podcast_ids must be an array")
-        
+            raise HTTPException(
+                status_code=400, detail="favorite_podcast_ids must be an array"
+            )
+
         # Note: Podcast metadata is fetched dynamically from podcasts table via JOINs
         # No need for denormalization as user_favorite_podcasts table is deprecated
-    
+
     try:
         # Pass automatic favorites only for step 5
         auto_favorites = AUTOMATIC_FAVORITE_PODCASTS if step_data.step == 5 else None
-        result = supabase_client.save_onboarding_step(user_id, step_data.step, step_data.data, user_token=None, automatic_favorites=auto_favorites)
+        result = supabase_client.save_onboarding_step(
+            user_id,
+            step_data.step,
+            step_data.data,
+            user_token=None,
+            automatic_favorites=auto_favorites,
+        )
 
         if result["success"]:
             # Track onboarding progress in Customer.io
             try:
                 # Get user email for Customer.io
-                user_data = supabase_client.service_client.auth.admin.get_user_by_id(user_id)
-                user_email = user_data.user.email if user_data and user_data.user else None
+                user_data = supabase_client.service_client.auth.admin.get_user_by_id(
+                    user_id
+                )
+                user_email = (
+                    user_data.user.email if user_data and user_data.user else None
+                )
 
                 if user_email:
                     environment = os.getenv("ENVIRONMENT", "dev")
@@ -3318,30 +3391,38 @@ async def save_onboarding_step(
                             email=user_email,
                             attributes={
                                 "onboarding": "started",
-                                "onboarding_environment": environment
-                            }
+                                "onboarding_environment": environment,
+                            },
                         )
                         if customerio_result["success"]:
-                            logger.info(f"Customer.io: Marked onboarding as started for {user_email}")
+                            logger.info(
+                                f"Customer.io: Marked onboarding as started for {user_email}"
+                            )
                         else:
-                            logger.warning(f"Customer.io: Failed to mark onboarding started: {customerio_result.get('error')}")
+                            logger.warning(
+                                f"Customer.io: Failed to mark onboarding started: {customerio_result.get('error')}"
+                            )
 
                     # Step 5: Mark onboarding as completed
                     elif step_data.step == 5:
                         customerio_result = customerio_client.update_user_attributes(
                             user_id=user_id,
                             email=user_email,
-                            attributes={
-                                "onboarding": "completed"
-                            }
+                            attributes={"onboarding": "completed"},
                         )
                         if customerio_result["success"]:
-                            logger.info(f"Customer.io: Marked onboarding as completed for {user_email}")
+                            logger.info(
+                                f"Customer.io: Marked onboarding as completed for {user_email}"
+                            )
                         else:
-                            logger.warning(f"Customer.io: Failed to mark onboarding completed: {customerio_result.get('error')}")
+                            logger.warning(
+                                f"Customer.io: Failed to mark onboarding completed: {customerio_result.get('error')}"
+                            )
             except Exception as e:
                 # Don't fail the request if Customer.io tracking fails
-                logger.warning(f"Customer.io onboarding tracking error (non-fatal): {str(e)}")
+                logger.warning(
+                    f"Customer.io onboarding tracking error (non-fatal): {str(e)}"
+                )
 
             # Invalidate episode cache for auto-favorite podcasts on step 5 completion
             if step_data.step == 5 and auto_favorites:
@@ -3349,7 +3430,9 @@ async def save_onboarding_step(
                     podcast_id = podcast.get("podcast_id")
                     if podcast_id:
                         podcast_service.episode_cache.invalidate_podcast(podcast_id)
-                        logger.info(f"Invalidated episode cache for auto-favorite podcast {podcast_id} on user signup completion")
+                        logger.info(
+                            f"Invalidated episode cache for auto-favorite podcast {podcast_id} on user signup completion"
+                        )
 
             step_name = {
                 1: "podcasting experience",
@@ -3396,6 +3479,52 @@ async def get_user_favorite_podcasts(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@app.get("/api/v1/user/conversation-limits", tags=["User"])
+@limiter.limit("60/minute")
+async def get_user_conversation_limits(
+    request: Request, user_id: str = Depends(get_current_user_from_session)
+):
+    """Get user's conversation limits and current usage status"""
+    try:
+        # Call database function to get conversation status
+        result = supabase_client.service_client.rpc(
+            "get_user_conversation_status", {"user_uuid": user_id}
+        ).execute()
+
+        if result.data and len(result.data) > 0:
+            status = result.data[0]
+            return {
+                "success": True,
+                "data": {
+                    "conversations_used": status["conversations_used"],
+                    "max_conversations": status["max_conversations"],
+                    "conversations_remaining": status["conversations_remaining"],
+                    "cycle_start_date": status["cycle_start_date"],
+                    "cycle_end_date": status["cycle_end_date"],
+                    "days_until_reset": status["days_until_reset"],
+                    "can_start_new": status["can_start_new"],
+                },
+            }
+        else:
+            # Return default for users without limits record (shouldn't happen but graceful fallback)
+            return {
+                "success": True,
+                "data": {
+                    "conversations_used": 0,
+                    "max_conversations": 5,
+                    "conversations_remaining": 5,
+                    "cycle_start_date": None,
+                    "cycle_end_date": None,
+                    "days_until_reset": 30,
+                    "can_start_new": True,
+                },
+            }
+
+    except Exception as e:
+        logger.error(f"Error getting conversation limits: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to get conversation limits")
+
+
 # Posts and Social Features Endpoints
 
 
@@ -3408,6 +3537,7 @@ async def upload_media(
 ):
     """Upload media files for posts (images, videos, audio)"""
     try:
+        print(files)
         media_service = MediaService()
         result = await media_service.upload_media_files(files, user_id)
         return result
@@ -3752,7 +3882,7 @@ async def get_post(
 async def update_post(
     post_id: str,
     request: Request,
-    user_id: str = Depends(get_current_user_from_session)
+    user_id: str = Depends(get_current_user_from_session),
 ):
     """Update a post
 
@@ -3779,12 +3909,16 @@ async def update_post(
         import json
 
         content_type = request.headers.get("content-type", "")
-        logger.info(f"[POST EDIT] post_id={post_id}, user_id={user_id}, content_type={content_type}")
+        logger.info(
+            f"[POST EDIT] post_id={post_id}, user_id={user_id}, content_type={content_type}"
+        )
 
         # Handle JSON mode (application/json)
         if "application/json" in content_type:
             body = await request.json()
-            logger.info(f"[POST EDIT - JSON MODE] Raw body from client: {json.dumps(body, indent=2)}")
+            logger.info(
+                f"[POST EDIT - JSON MODE] Raw body from client: {json.dumps(body, indent=2)}"
+            )
             update_data = UpdatePostRequest(**body)
 
             update_dict = {}
@@ -3801,22 +3935,31 @@ async def update_post(
                 media_items = []
                 if update_data.media_urls:
                     try:
-                        result = supabase_client.service_client.table('temp_media_uploads') \
-                            .select('file_url, storage_path, media_type') \
-                            .in_('file_url', update_data.media_urls) \
-                            .eq('user_id', user_id) \
+                        result = (
+                            supabase_client.service_client.table("temp_media_uploads")
+                            .select("file_url, storage_path, media_type")
+                            .in_("file_url", update_data.media_urls)
+                            .eq("user_id", user_id)
                             .execute()
+                        )
 
                         if result.data:
                             for item in result.data:
-                                media_items.append({
-                                    'url': item['file_url'],
-                                    'storage_path': item.get('storage_path'),
-                                    'type': item.get('media_type', 'image')
-                                })
+                                media_items.append(
+                                    {
+                                        "url": item["file_url"],
+                                        "storage_path": item.get("storage_path"),
+                                        "type": item.get("media_type", "image"),
+                                    }
+                                )
                     except Exception as e:
-                        logger.warning(f"Could not fetch storage_path for pre-uploaded media: {e}")
-                        media_items = [{'url': url, 'storage_path': None, 'type': 'image'} for url in update_data.media_urls]
+                        logger.warning(
+                            f"Could not fetch storage_path for pre-uploaded media: {e}"
+                        )
+                        media_items = [
+                            {"url": url, "storage_path": None, "type": "image"}
+                            for url in update_data.media_urls
+                        ]
 
                 update_dict["media_items"] = media_items
 
@@ -3831,7 +3974,7 @@ async def update_post(
             files = form.getlist("files")
 
             # Log raw form data from client
-            logger.info(f"[POST EDIT - FORM DATA MODE] Raw form data from client:")
+            logger.info("[POST EDIT - FORM DATA MODE] Raw form data from client:")
             logger.info(f"  - content: {content}")
             logger.info(f"  - post_type: {post_type}")
             logger.info(f"  - podcast_episode_url: {podcast_episode_url}")
@@ -3840,7 +3983,9 @@ async def update_post(
             logger.info(f"  - files count: {len(files) if files else 0}")
             if files:
                 for i, file in enumerate(files):
-                    logger.info(f"    - file[{i}]: filename={file.filename}, content_type={file.content_type}, size={file.size if hasattr(file, 'size') else 'unknown'}")
+                    logger.info(
+                        f"    - file[{i}]: filename={file.filename}, content_type={file.content_type}, size={file.size if hasattr(file, 'size') else 'unknown'}"
+                    )
 
             update_dict = {}
             media_urls = []
@@ -3865,7 +4010,9 @@ async def update_post(
                         raise ValueError("keep_media_ids must be a JSON array")
                     update_dict["keep_media_ids"] = keep_media_ids
                 except (json.JSONDecodeError, ValueError) as e:
-                    raise HTTPException(status_code=400, detail=f"Invalid keep_media_ids: {str(e)}")
+                    raise HTTPException(
+                        status_code=400, detail=f"Invalid keep_media_ids: {str(e)}"
+                    )
 
             # Parse pre-uploaded media URLs from JSON string if provided
             if media_urls_json:
@@ -3874,12 +4021,16 @@ async def update_post(
                     if not isinstance(media_urls, list):
                         raise ValueError("media_urls_json must be a JSON array")
                 except (json.JSONDecodeError, ValueError) as e:
-                    raise HTTPException(status_code=400, detail=f"Invalid media_urls_json: {str(e)}")
+                    raise HTTPException(
+                        status_code=400, detail=f"Invalid media_urls_json: {str(e)}"
+                    )
 
             # Validate file count if files provided (max 10 files per post)
             has_files = files and len(files) > 0
             if has_files and len(files) > 10:
-                raise HTTPException(status_code=400, detail="Maximum 10 files allowed per post")
+                raise HTTPException(
+                    status_code=400, detail="Maximum 10 files allowed per post"
+                )
 
             # Upload new media files to R2 if provided
             uploaded_media_items = []
@@ -3893,8 +4044,7 @@ async def update_post(
                         media_urls.append(media_item["url"])
                 else:
                     raise HTTPException(
-                        status_code=500,
-                        detail="Failed to upload media files"
+                        status_code=500, detail="Failed to upload media files"
                     )
 
             # Add media_urls and media_items if any media was provided
@@ -3906,28 +4056,29 @@ async def update_post(
             if not update_dict:
                 raise HTTPException(
                     status_code=400,
-                    detail="At least one field must be provided to update"
+                    detail="At least one field must be provided to update",
                 )
 
         else:
             raise HTTPException(
                 status_code=400,
-                detail="Invalid Content-Type. Use application/json or multipart/form-data"
+                detail="Invalid Content-Type. Use application/json or multipart/form-data",
             )
 
         # Validate at least one field is being updated
         if not update_dict:
             raise HTTPException(
-                status_code=400,
-                detail="At least one field must be provided to update"
+                status_code=400, detail="At least one field must be provided to update"
             )
 
         # Log final processed update_dict before sending to update function
-        logger.info(f"[POST EDIT] Final update_dict being sent to update function:")
+        logger.info("[POST EDIT] Final update_dict being sent to update function:")
         # Create a safe copy for logging (avoid logging large file data)
         safe_update_dict = update_dict.copy()
         if "media_items" in safe_update_dict and safe_update_dict["media_items"]:
-            safe_update_dict["media_items"] = f"[{len(safe_update_dict['media_items'])} media items]"
+            safe_update_dict["media_items"] = (
+                f"[{len(safe_update_dict['media_items'])} media items]"
+            )
         logger.info(f"  {json.dumps(safe_update_dict, indent=2)}")
 
         # Update the post
@@ -3935,7 +4086,9 @@ async def update_post(
 
         logger.info(f"[POST EDIT] Update result - success: {result.get('success')}")
         if result.get("success"):
-            logger.info(f"[POST EDIT] Updated post data: {json.dumps(result.get('data', {}), indent=2, default=str)}")
+            logger.info(
+                f"[POST EDIT] Updated post data: {json.dumps(result.get('data', {}), indent=2, default=str)}"
+            )
         else:
             logger.error(f"[POST EDIT] Update failed with error: {result.get('error')}")
 
@@ -3943,7 +4096,9 @@ async def update_post(
             # Mark media as used if media was updated
             if update_dict.get("media_urls"):
                 media_service = MediaService()
-                await media_service.mark_media_as_used(update_dict["media_urls"], user_id)
+                await media_service.mark_media_as_used(
+                    update_dict["media_urls"], user_id
+                )
 
             # Invalidate feed cache after post update
             get_feed_cache_service().invalidate()
@@ -4025,20 +4180,28 @@ async def toggle_like(
 
                         # Send email notification for post owner (background task)
                         try:
-                            from background_tasks import send_activity_notification_email
-                            from email_notification_service import NOTIFICATION_TYPE_POST_REACTION
+                            from background_tasks import (
+                                send_activity_notification_email,
+                            )
+                            from email_notification_service import (
+                                NOTIFICATION_TYPE_POST_REACTION,
+                            )
 
                             # Don't notify if user is liking their own post (already checked above, but explicit)
                             if post_author_id != user_id:
                                 # Send email immediately as background task (non-blocking)
-                                asyncio.create_task(send_activity_notification_email(
-                                    user_id=post_author_id,
-                                    notification_type=NOTIFICATION_TYPE_POST_REACTION,
-                                    actor_id=user_id,
-                                    resource_id=post_id
-                                ))
+                                asyncio.create_task(
+                                    send_activity_notification_email(
+                                        user_id=post_author_id,
+                                        notification_type=NOTIFICATION_TYPE_POST_REACTION,
+                                        actor_id=user_id,
+                                        resource_id=post_id,
+                                    )
+                                )
                         except Exception as email_error:
-                            logger.warning(f"Failed to send post reaction email notification: {email_error}")
+                            logger.warning(
+                                f"Failed to send post reaction email notification: {email_error}"
+                            )
 
                 except Exception as e:
                     logger.warning(f"Failed to send post like notification: {e}")
@@ -4308,8 +4471,10 @@ async def get_user_posts(
         if target_user_id == "me":
             target_user_id = user_id
 
-        result = supabase_client.posts.get_user_posts(user_id, target_user_id, limit, cursor)
-        
+        result = supabase_client.posts.get_user_posts(
+            user_id, target_user_id, limit, cursor
+        )
+
         if result["success"]:
             return FeedResponse(**result["data"])
         else:
@@ -4342,13 +4507,20 @@ async def send_connection_request(
             if result["success"]:
                 # Invalidate profile cache
                 try:
-                    from user_profile_cache_service import get_user_profile_cache_service
+                    from user_profile_cache_service import (
+                        get_user_profile_cache_service,
+                    )
+
                     profile_cache = get_user_profile_cache_service()
                     profile_cache.invalidate(user_id)
                     profile_cache.invalidate(connection_data.user_id)
-                    logger.info(f"Invalidated profile cache for users {user_id} and {connection_data.user_id} after connection request")
+                    logger.info(
+                        f"Invalidated profile cache for users {user_id} and {connection_data.user_id} after connection request"
+                    )
                 except Exception as e:
-                    logger.warning(f"Failed to invalidate profile cache after connection request (non-fatal): {e}")
+                    logger.warning(
+                        f"Failed to invalidate profile cache after connection request (non-fatal): {e}"
+                    )
 
                 # Send notification
                 try:
@@ -4368,17 +4540,23 @@ async def send_connection_request(
                     # Send email notification for connection request (background task)
                     try:
                         from background_tasks import send_activity_notification_email
-                        from email_notification_service import NOTIFICATION_TYPE_CONNECTION_REQUEST
+                        from email_notification_service import (
+                            NOTIFICATION_TYPE_CONNECTION_REQUEST,
+                        )
 
                         # Send email immediately as background task (non-blocking)
-                        asyncio.create_task(send_activity_notification_email(
-                            user_id=connection_data.user_id,
-                            notification_type=NOTIFICATION_TYPE_CONNECTION_REQUEST,
-                            actor_id=user_id,
-                            resource_id=None  # No specific resource for connection requests
-                        ))
+                        asyncio.create_task(
+                            send_activity_notification_email(
+                                user_id=connection_data.user_id,
+                                notification_type=NOTIFICATION_TYPE_CONNECTION_REQUEST,
+                                actor_id=user_id,
+                                resource_id=None,  # No specific resource for connection requests
+                            )
+                        )
                     except Exception as email_error:
-                        logger.warning(f"Failed to send connection request email notification: {email_error}")
+                        logger.warning(
+                            f"Failed to send connection request email notification: {email_error}"
+                        )
 
                 except Exception as e:
                     logger.warning(
@@ -4406,13 +4584,20 @@ async def send_connection_request(
                 if result["success"]:
                     # Invalidate profile cache
                     try:
-                        from user_profile_cache_service import get_user_profile_cache_service
+                        from user_profile_cache_service import (
+                            get_user_profile_cache_service,
+                        )
+
                         profile_cache = get_user_profile_cache_service()
                         profile_cache.invalidate(user_id)
                         profile_cache.invalidate(connection_data.user_id)
-                        logger.info(f"Invalidated profile cache for users {user_id} and {connection_data.user_id} after connection accepted")
+                        logger.info(
+                            f"Invalidated profile cache for users {user_id} and {connection_data.user_id} after connection accepted"
+                        )
                     except Exception as e:
-                        logger.warning(f"Failed to invalidate profile cache after connection accept (non-fatal): {e}")
+                        logger.warning(
+                            f"Failed to invalidate profile cache after connection accept (non-fatal): {e}"
+                        )
 
                     # Send notification
                     try:
@@ -4550,6 +4735,7 @@ async def get_suggested_creators(
 
         # Get user profiles using UserProfileService (includes avatars with signed URLs)
         from user_profile_service import UserProfileService
+
         profile_service = UserProfileService()
         user_profiles = await profile_service.get_users_by_ids(user_ids_list)
 
@@ -4559,9 +4745,13 @@ async def get_suggested_creators(
             creator = {
                 "id": profile["id"],
                 "full_name": profile.get("name", "Unknown"),
-                "username": profile.get("email", "").split("@")[0] if profile.get("email") else "unknown",
+                "username": profile.get("email", "").split("@")[0]
+                if profile.get("email")
+                else "unknown",
                 "bio": profile.get("bio", ""),
-                "profile_picture_url": profile.get("avatar_url"),  # Now includes signed URL
+                "profile_picture_url": profile.get(
+                    "avatar_url"
+                ),  # Now includes signed URL
                 "created_at": profile.get("created_at"),
             }
             suggested_creators.append(creator)
@@ -4787,21 +4977,27 @@ async def get_trending_topics(request: Request, limit: int = 20):
 
 # Resources Endpoints
 
-@app.get("/api/v1/blogs/categories/all", response_model=List[ResourceCategoryResponse], tags=["Blogs"])
+
+@app.get(
+    "/api/v1/blogs/categories/all", response_model=List[BlogCategory], tags=["Blogs"]
+)
 @limiter.limit("60/minute")
 async def get_all_blog_categories(request: Request):
     """
     Get all available blog categories.
     """
     try:
-        categories_data = await resources_service.get_resource_categories()
+        categories_data = await resources_service.get_all_blog_categories()
         return categories_data
     except Exception as e:
         logger.error(f"Failed to get blog categories: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to retrieve blog categories")
+        raise HTTPException(
+            status_code=500, detail="Failed to retrieve blog categories"
+        )
+
 
 @app.get(
-    "/api/v1/resources/blogs",
+    "/api/v1/blogs/all",
     response_model=BlogsResponse,
     tags=["Blogs"],
     summary="Get all blog posts",
@@ -4816,10 +5012,22 @@ async def get_all_blog_posts(
     """
     try:
         # Service method to get blogs
-        result = await resources_service.get_blog_posts(
-            limit=limit, offset=offset
-        )
+        result = await resources_service.get_blog_posts(limit=limit, offset=offset)
         return result
+    except Exception as e:
+        logger.error(f"Failed to get blog posts: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve blog posts")
+
+
+@app.get(
+    "/api/v1/blog/{blog_id}",
+    tags=["Blogs"],
+    summary="Get single blog post",
+    response_model=BlogResponse,
+)
+async def get_single_blog_post(blog_id: str) -> Dict[str, Any]:
+    try:
+        return await resources_service.get_blog(blog_id)
     except Exception as e:
         logger.error(f"Failed to get blog posts: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve blog posts")
@@ -4831,9 +5039,7 @@ async def get_all_blog_posts(
     tags=["Blogs"],
     summary="Get blog posts by category",
 )
-async def get_blogs_by_category(
-    category_id: UUID, limit: int = 20, offset: int = 0
-):
+async def get_blogs_by_category(category_id: UUID, limit: int = 20, offset: int = 0):
     """
     Get blog posts by category
     Public endpoint, no authentication required.
@@ -4846,7 +5052,6 @@ async def get_blogs_by_category(
     except Exception as e:
         logger.error(f"Error getting blogs by category: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to get blog posts")
-
 
 
 @app.get("/api/v1/resources", response_model=ResourcesResponse, tags=["Resources"])
@@ -5350,8 +5555,8 @@ async def get_events(
 
     try:
         # Return one random upcoming event
-        from datetime import datetime, timedelta
         import random
+        from datetime import datetime, timedelta
 
         future_date = datetime.utcnow() + timedelta(days=30)
 
@@ -6331,29 +6536,42 @@ async def follow_podcast(
     """Follow a podcast"""
     try:
         user_id = get_current_user_id(request)
-        result = await user_listening_service.follow_podcast(user_id, podcast_id, notification_enabled)
+        result = await user_listening_service.follow_podcast(
+            user_id, podcast_id, notification_enabled
+        )
 
         if not result["success"]:
             raise HTTPException(status_code=400, detail=result["message"])
 
         # Invalidate episode cache for this podcast to fetch fresh episodes
         podcast_service.episode_cache.invalidate_podcast(podcast_id)
-        logger.info(f"Invalidated episode cache for podcast {podcast_id} on user follow")
+        logger.info(
+            f"Invalidated episode cache for podcast {podcast_id} on user follow"
+        )
 
         # Queue email notification for podcast owner if claimed
         try:
             # Get podcast's listennotes_id first
-            podcast_result = supabase_client.service_client.table("podcasts").select(
-                "listennotes_id"
-            ).eq("id", podcast_id).single().execute()
+            podcast_result = (
+                supabase_client.service_client.table("podcasts")
+                .select("listennotes_id")
+                .eq("id", podcast_id)
+                .single()
+                .execute()
+            )
 
             if podcast_result.data and podcast_result.data.get("listennotes_id"):
                 listennotes_id = podcast_result.data["listennotes_id"]
 
                 # Get podcast owner from podcast_claims table using listennotes_id
-                claim_result = supabase_client.service_client.table("podcast_claims").select(
-                    "user_id"
-                ).eq("listennotes_id", listennotes_id).eq("is_verified", True).eq("claim_status", "verified").execute()
+                claim_result = (
+                    supabase_client.service_client.table("podcast_claims")
+                    .select("user_id")
+                    .eq("listennotes_id", listennotes_id)
+                    .eq("is_verified", True)
+                    .eq("claim_status", "verified")
+                    .execute()
+                )
 
                 if claim_result.data and len(claim_result.data) > 0:
                     podcast_owner_id = claim_result.data[0]["user_id"]
@@ -6361,17 +6579,23 @@ async def follow_podcast(
                     # Don't notify if user is following their own podcast
                     if podcast_owner_id != user_id:
                         from background_tasks import send_activity_notification_email
-                        from email_notification_service import NOTIFICATION_TYPE_PODCAST_FOLLOW
+                        from email_notification_service import (
+                            NOTIFICATION_TYPE_PODCAST_FOLLOW,
+                        )
 
                         # Send email immediately as background task (non-blocking)
-                        asyncio.create_task(send_activity_notification_email(
-                            user_id=podcast_owner_id,
-                            notification_type=NOTIFICATION_TYPE_PODCAST_FOLLOW,
-                            actor_id=user_id,
-                            resource_id=podcast_id
-                        ))
+                        asyncio.create_task(
+                            send_activity_notification_email(
+                                user_id=podcast_owner_id,
+                                notification_type=NOTIFICATION_TYPE_PODCAST_FOLLOW,
+                                actor_id=user_id,
+                                resource_id=podcast_id,
+                            )
+                        )
         except Exception as email_error:
-            logger.warning(f"Failed to send podcast follow email notification: {email_error}")
+            logger.warning(
+                f"Failed to send podcast follow email notification: {email_error}"
+            )
 
         return result
     except HTTPException:
@@ -6541,12 +6765,18 @@ async def record_episode_listen_start(episode_id: str, request: Request):
     """
     try:
         user_id = get_current_user_id(request)
-        logger.info(f"🎧 Recording episode listen start: user={user_id}, episode={episode_id}")
+        logger.info(
+            f"🎧 Recording episode listen start: user={user_id}, episode={episode_id}"
+        )
 
         # Get episode details to find podcast
-        episode_result = supabase_client.service_client.table("episodes").select(
-            "podcast_id, title"
-        ).eq("id", episode_id).single().execute()
+        episode_result = (
+            supabase_client.service_client.table("episodes")
+            .select("podcast_id, title")
+            .eq("id", episode_id)
+            .single()
+            .execute()
+        )
 
         if not episode_result.data:
             logger.warning(f"Episode {episode_id} not found")
@@ -6557,35 +6787,48 @@ async def record_episode_listen_start(episode_id: str, request: Request):
 
         # Record the listen
         result = episode_listen_service.record_episode_listen(
-            user_id=user_id,
-            episode_id=episode_id,
-            podcast_id=podcast_id
+            user_id=user_id, episode_id=episode_id, podcast_id=podcast_id
         )
 
         if not result["success"]:
-            raise HTTPException(status_code=500, detail=result.get("error", "Failed to record listen"))
+            raise HTTPException(
+                status_code=500, detail=result.get("error", "Failed to record listen")
+            )
 
         is_first_listen = result["is_first_listen"]
 
         # Send notification to podcast owner if this is a first listen
         if is_first_listen:
             try:
-                logger.info(f"📧 First listen detected - checking for podcast owner to notify...")
+                logger.info(
+                    "📧 First listen detected - checking for podcast owner to notify..."
+                )
 
                 # Get podcast's listennotes_id
-                podcast_result = supabase_client.service_client.table("podcasts").select(
-                    "listennotes_id, title"
-                ).eq("id", podcast_id).single().execute()
+                podcast_result = (
+                    supabase_client.service_client.table("podcasts")
+                    .select("listennotes_id, title")
+                    .eq("id", podcast_id)
+                    .single()
+                    .execute()
+                )
 
                 if podcast_result.data and podcast_result.data.get("listennotes_id"):
                     listennotes_id = podcast_result.data["listennotes_id"]
                     podcast_title = podcast_result.data.get("title", "Unknown Podcast")
-                    logger.info(f"Found podcast: {podcast_title} (listennotes_id: {listennotes_id})")
+                    logger.info(
+                        f"Found podcast: {podcast_title} (listennotes_id: {listennotes_id})"
+                    )
 
                     # Get podcast owner from podcast_claims table
-                    claim_result = supabase_client.service_client.table("podcast_claims").select(
-                        "user_id"
-                    ).eq("listennotes_id", listennotes_id).eq("is_verified", True).eq("claim_status", "verified").execute()
+                    claim_result = (
+                        supabase_client.service_client.table("podcast_claims")
+                        .select("user_id")
+                        .eq("listennotes_id", listennotes_id)
+                        .eq("is_verified", True)
+                        .eq("claim_status", "verified")
+                        .execute()
+                    )
 
                     if claim_result.data and len(claim_result.data) > 0:
                         podcast_owner_id = claim_result.data[0]["user_id"]
@@ -6593,32 +6836,46 @@ async def record_episode_listen_start(episode_id: str, request: Request):
 
                         # Don't notify if user is listening to their own podcast
                         if podcast_owner_id != user_id:
-                            from background_tasks import send_activity_notification_email
-                            from email_notification_service import NOTIFICATION_TYPE_PODCAST_LISTEN
+                            from background_tasks import (
+                                send_activity_notification_email,
+                            )
+                            from email_notification_service import (
+                                NOTIFICATION_TYPE_PODCAST_LISTEN,
+                            )
 
-                            logger.info(f"✅ Sending podcast listen notification email to owner {podcast_owner_id}")
+                            logger.info(
+                                f"✅ Sending podcast listen notification email to owner {podcast_owner_id}"
+                            )
                             # Send email immediately as background task (non-blocking)
                             import asyncio
-                            asyncio.create_task(send_activity_notification_email(
-                                user_id=podcast_owner_id,
-                                notification_type=NOTIFICATION_TYPE_PODCAST_LISTEN,
-                                actor_id=user_id,
-                                resource_id=episode_id
-                            ))
+
+                            asyncio.create_task(
+                                send_activity_notification_email(
+                                    user_id=podcast_owner_id,
+                                    notification_type=NOTIFICATION_TYPE_PODCAST_LISTEN,
+                                    actor_id=user_id,
+                                    resource_id=episode_id,
+                                )
+                            )
                         else:
-                            logger.info(f"Skipping notification - user listening to their own podcast")
+                            logger.info(
+                                "Skipping notification - user listening to their own podcast"
+                            )
                     else:
-                        logger.info(f"No verified owner found for podcast with listennotes_id {listennotes_id}")
+                        logger.info(
+                            f"No verified owner found for podcast with listennotes_id {listennotes_id}"
+                        )
                 else:
                     logger.info(f"No listennotes_id found for podcast {podcast_id}")
             except Exception as email_error:
                 # Don't fail the request if notification fails
-                logger.error(f"❌ Failed to send podcast listen notification: {email_error}", exc_info=True)
+                logger.error(
+                    f"❌ Failed to send podcast listen notification: {email_error}",
+                    exc_info=True,
+                )
 
         return RecordEpisodeListenResponse(
-            success=True,
-            is_first_listen=is_first_listen,
-            error=None
+            success=True, is_first_listen=is_first_listen, error=None
         )
 
     except HTTPException:
@@ -6659,7 +6916,9 @@ async def update_listening_progress(
     """
     try:
         user_id = get_current_user_id(request)
-        logger.info(f"📊 Listening progress update: user={user_id}, episode={episode_id}, progress={body.progress_seconds}s")
+        logger.info(
+            f"📊 Listening progress update: user={user_id}, episode={episode_id}, progress={body.progress_seconds}s"
+        )
 
         result = await user_listening_service.update_listening_progress(
             user_id,
@@ -7160,14 +7419,18 @@ async def send_message(
                     from email_notification_service import NOTIFICATION_TYPE_NEW_MESSAGE
 
                     # Send email immediately as background task (non-blocking)
-                    asyncio.create_task(send_activity_notification_email(
-                        user_id=recipient_id,
-                        notification_type=NOTIFICATION_TYPE_NEW_MESSAGE,
-                        actor_id=user_id,
-                        resource_id=conversation_id
-                    ))
+                    asyncio.create_task(
+                        send_activity_notification_email(
+                            user_id=recipient_id,
+                            notification_type=NOTIFICATION_TYPE_NEW_MESSAGE,
+                            actor_id=user_id,
+                            resource_id=conversation_id,
+                        )
+                    )
                 except Exception as email_error:
-                    logger.warning(f"Failed to send new message email notification: {email_error}")
+                    logger.warning(
+                        f"Failed to send new message email notification: {email_error}"
+                    )
 
         except Exception as e:
             logger.warning(f"Failed to send message notification: {e}")
@@ -7564,7 +7827,10 @@ async def get_user_profile(user_id: str, request: Request):
             try:
                 user_id = get_current_user_id(request)
             except HTTPException:
-                raise HTTPException(status_code=401, detail="Authentication required to access your own profile")
+                raise HTTPException(
+                    status_code=401,
+                    detail="Authentication required to access your own profile",
+                )
 
         # Check privacy settings - get requesting user ID
         requesting_user_id = None
@@ -7610,7 +7876,10 @@ async def get_user_profile(user_id: str, request: Request):
                 profile["connection_status"] = None
         except Exception as e:
             # If not authenticated or error getting status, set to None
-            logger.error(f"Error getting connection status for user {user_id}: {str(e) if str(e) else 'Unknown error'}", exc_info=True)
+            logger.error(
+                f"Error getting connection status for user {user_id}: {str(e) if str(e) else 'Unknown error'}",
+                exc_info=True,
+            )
             profile["connection_status"] = None
 
         return {"success": True, "data": profile}
@@ -7689,7 +7958,10 @@ async def get_user_avatar(user_id: str, request: Request):
             try:
                 user_id = get_current_user_id(request)
             except HTTPException:
-                raise HTTPException(status_code=401, detail="Authentication required to access your own avatar")
+                raise HTTPException(
+                    status_code=401,
+                    detail="Authentication required to access your own avatar",
+                )
 
         profile_service = UserProfileService()
         result = await profile_service.get_user_avatar(user_id)
@@ -7871,12 +8143,17 @@ async def send_connection_request(request: Request, user_id: str):
         if result.get("success"):
             try:
                 from user_profile_cache_service import get_user_profile_cache_service
+
                 profile_cache = get_user_profile_cache_service()
                 profile_cache.invalidate(requester_id)
                 profile_cache.invalidate(user_id)
-                logger.info(f"Invalidated profile cache for users {requester_id} and {user_id} after connection request")
+                logger.info(
+                    f"Invalidated profile cache for users {requester_id} and {user_id} after connection request"
+                )
             except Exception as e:
-                logger.warning(f"Failed to invalidate profile cache after connection request (non-fatal): {e}")
+                logger.warning(
+                    f"Failed to invalidate profile cache after connection request (non-fatal): {e}"
+                )
 
             # Send notification for new connection request
             try:
@@ -7896,17 +8173,23 @@ async def send_connection_request(request: Request, user_id: str):
                 # Send email notification for connection request (background task)
                 try:
                     from background_tasks import send_activity_notification_email
-                    from email_notification_service import NOTIFICATION_TYPE_CONNECTION_REQUEST
+                    from email_notification_service import (
+                        NOTIFICATION_TYPE_CONNECTION_REQUEST,
+                    )
 
                     # Send email immediately as background task (non-blocking)
-                    asyncio.create_task(send_activity_notification_email(
-                        user_id=user_id,
-                        notification_type=NOTIFICATION_TYPE_CONNECTION_REQUEST,
-                        actor_id=requester_id,
-                        resource_id=None  # No specific resource for connection requests
-                    ))
+                    asyncio.create_task(
+                        send_activity_notification_email(
+                            user_id=user_id,
+                            notification_type=NOTIFICATION_TYPE_CONNECTION_REQUEST,
+                            actor_id=requester_id,
+                            resource_id=None,  # No specific resource for connection requests
+                        )
+                    )
                 except Exception as email_error:
-                    logger.warning(f"Failed to queue connection request email notification: {email_error}")
+                    logger.warning(
+                        f"Failed to queue connection request email notification: {email_error}"
+                    )
 
             except Exception as e:
                 logger.warning(f"Failed to send connection request notification: {e}")
@@ -7947,13 +8230,20 @@ async def accept_connection_request(request: Request, request_id: str):
 
                     # Invalidate profile cache for both users
                     try:
-                        from user_profile_cache_service import get_user_profile_cache_service
+                        from user_profile_cache_service import (
+                            get_user_profile_cache_service,
+                        )
+
                         profile_cache = get_user_profile_cache_service()
                         profile_cache.invalidate(requester_id)
                         profile_cache.invalidate(user_id)
-                        logger.info(f"Invalidated profile cache for users {requester_id} and {user_id} after connection accepted")
+                        logger.info(
+                            f"Invalidated profile cache for users {requester_id} and {user_id} after connection accepted"
+                        )
                     except Exception as e:
-                        logger.warning(f"Failed to invalidate profile cache after connection accept (non-fatal): {e}")
+                        logger.warning(
+                            f"Failed to invalidate profile cache after connection accept (non-fatal): {e}"
+                        )
 
                     user_profile_service = UserProfileService()
                     accepter_profile = await user_profile_service.get_user_profile(
@@ -7993,20 +8283,31 @@ async def decline_connection_request(request: Request, request_id: str):
         if result.get("success"):
             try:
                 # Get the connection to find the requester
-                connection_result = supabase_client.service_client.table("user_connections").select(
-                    "follower_id"
-                ).eq("id", request_id).single().execute()
+                connection_result = (
+                    supabase_client.service_client.table("user_connections")
+                    .select("follower_id")
+                    .eq("id", request_id)
+                    .single()
+                    .execute()
+                )
 
                 if connection_result.data:
                     requester_id = connection_result.data["follower_id"]
 
-                    from user_profile_cache_service import get_user_profile_cache_service
+                    from user_profile_cache_service import (
+                        get_user_profile_cache_service,
+                    )
+
                     profile_cache = get_user_profile_cache_service()
                     profile_cache.invalidate(requester_id)
                     profile_cache.invalidate(user_id)
-                    logger.info(f"Invalidated profile cache for users {requester_id} and {user_id} after connection declined")
+                    logger.info(
+                        f"Invalidated profile cache for users {requester_id} and {user_id} after connection declined"
+                    )
             except Exception as e:
-                logger.warning(f"Failed to invalidate profile cache after connection decline (non-fatal): {e}")
+                logger.warning(
+                    f"Failed to invalidate profile cache after connection decline (non-fatal): {e}"
+                )
 
         return result
     except HTTPException:
@@ -8587,10 +8888,14 @@ async def delete_notification(
 # STRIPE & SUBSCRIPTION ENDPOINTS
 # =============================================================================
 
-@app.post("/api/v1/stripe/create-checkout-session", response_model=CreateCheckoutSessionResponse, tags=["Stripe"])
+
+@app.post(
+    "/api/v1/stripe/create-checkout-session",
+    response_model=CreateCheckoutSessionResponse,
+    tags=["Stripe"],
+)
 async def create_checkout_session(
-    request_data: CreateCheckoutSessionRequest,
-    request: Request
+    request_data: CreateCheckoutSessionRequest, request: Request
 ):
     """
     Create a Stripe Checkout Session for subscription.
@@ -8606,9 +8911,15 @@ async def create_checkout_session(
             raise HTTPException(status_code=404, detail="User not found")
 
         email = user_data.user.email
-        name = user_data.user.user_metadata.get("name") if user_data.user.user_metadata else None
+        name = (
+            user_data.user.user_metadata.get("name")
+            if user_data.user.user_metadata
+            else None
+        )
 
-        logger.info(f"Creating checkout session for user {user_id}, plan: {request_data.plan}")
+        logger.info(
+            f"Creating checkout session for user {user_id}, plan: {request_data.plan}"
+        )
 
         # Initialize services
         from stripe_service import StripeService
@@ -8622,13 +8933,19 @@ async def create_checkout_session(
 
         if not stripe_customer_id:
             # Create new Stripe customer
-            stripe_customer_id = stripe_service.get_or_create_customer(user_id, email, name)
+            stripe_customer_id = stripe_service.get_or_create_customer(
+                user_id, email, name
+            )
 
             if not stripe_customer_id:
-                raise HTTPException(status_code=500, detail="Failed to create Stripe customer")
+                raise HTTPException(
+                    status_code=500, detail="Failed to create Stripe customer"
+                )
 
             # Save to database
-            subscription_service.get_or_create_stripe_customer(user_id, stripe_customer_id, email)
+            subscription_service.get_or_create_stripe_customer(
+                user_id, stripe_customer_id, email
+            )
 
         # Get price ID and mode based on plan
         if request_data.plan == "pro_monthly":
@@ -8641,25 +8958,30 @@ async def create_checkout_session(
             raise HTTPException(status_code=400, detail="Invalid plan type")
 
         if not price_id:
-            raise HTTPException(status_code=500, detail=f"Stripe price ID not configured for {request_data.plan} plan")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Stripe price ID not configured for {request_data.plan} plan",
+            )
 
         # Create checkout session (uses env var URLs)
         session = stripe_service.create_checkout_session(
             customer_id=stripe_customer_id,
             price_id=price_id,
             user_id=user_id,
-            mode=mode
+            mode=mode,
         )
 
         if not session:
-            raise HTTPException(status_code=500, detail="Failed to create checkout session")
+            raise HTTPException(
+                status_code=500, detail="Failed to create checkout session"
+            )
 
-        logger.info(f"✅ Created checkout session {session['session_id']} for user {user_id}")
+        logger.info(
+            f"✅ Created checkout session {session['session_id']} for user {user_id}"
+        )
 
         return CreateCheckoutSessionResponse(
-            success=True,
-            session_id=session["session_id"],
-            url=session["url"]
+            success=True, session_id=session["session_id"], url=session["url"]
         )
 
     except HTTPException:
@@ -8667,15 +8989,17 @@ async def create_checkout_session(
     except Exception as e:
         logger.error(f"❌ Error creating checkout session: {str(e)}", exc_info=True)
         return CreateCheckoutSessionResponse(
-            success=False,
-            error="Failed to create checkout session"
+            success=False, error="Failed to create checkout session"
         )
 
 
-@app.post("/api/v1/stripe/create-portal-session", response_model=CreatePortalSessionResponse, tags=["Stripe"])
+@app.post(
+    "/api/v1/stripe/create-portal-session",
+    response_model=CreatePortalSessionResponse,
+    tags=["Stripe"],
+)
 async def create_portal_session(
-    request_data: CreatePortalSessionRequest,
-    request: Request
+    request_data: CreatePortalSessionRequest, request: Request
 ):
     """
     Create a Stripe Customer Portal session for subscription management.
@@ -8698,32 +9022,114 @@ async def create_portal_session(
         stripe_customer_id = subscription_service.get_stripe_customer_id(user_id)
 
         if not stripe_customer_id:
-            raise HTTPException(status_code=404, detail="No Stripe customer found for user")
+            raise HTTPException(
+                status_code=404, detail="No Stripe customer found for user"
+            )
 
         # Create portal session
         portal_url = stripe_service.create_customer_portal_session(
-            customer_id=stripe_customer_id,
-            return_url=request_data.return_url
+            customer_id=stripe_customer_id, return_url=request_data.return_url
         )
 
         if not portal_url:
-            raise HTTPException(status_code=500, detail="Failed to create portal session")
+            raise HTTPException(
+                status_code=500, detail="Failed to create portal session"
+            )
 
         logger.info(f"✅ Created portal session for user {user_id}")
 
-        return CreatePortalSessionResponse(
-            success=True,
-            url=portal_url
-        )
+        return CreatePortalSessionResponse(success=True, url=portal_url)
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"❌ Error creating portal session: {str(e)}", exc_info=True)
         return CreatePortalSessionResponse(
-            success=False,
-            error="Failed to create portal session"
+            success=False, error="Failed to create portal session"
         )
+
+
+@app.get(
+    "/api/v1/stripe/verify-session/{session_id}",
+    response_model=VerifySessionResponse,
+    tags=["Stripe"],
+)
+async def verify_checkout_session(session_id: str, request: Request):
+    """
+    Verify a Stripe checkout session and return payment status.
+    Used to confirm successful payment after redirect from Stripe.
+    User must be authenticated.
+    """
+    try:
+        # Get authenticated user
+        user_id = get_current_user_id(request)
+
+        logger.info(f"Verifying checkout session {session_id} for user {user_id}")
+
+        # Initialize Stripe service
+        from stripe_service import StripeService
+
+        stripe_service = StripeService()
+
+        # Retrieve session from Stripe
+        session_data = stripe_service.retrieve_checkout_session(session_id)
+
+        if not session_data:
+            return VerifySessionResponse(
+                success=False, error="Invalid session ID or session not found"
+            )
+
+        # Verify session belongs to this user (security check)
+        session_user_id = session_data.get("metadata", {}).get("user_id")
+        if session_user_id != user_id:
+            logger.warning(f"Session {session_id} does not belong to user {user_id}")
+            raise HTTPException(
+                status_code=403, detail="Session does not belong to user"
+            )
+
+        # Determine plan type based on mode and metadata
+        plan_type = None
+        if session_data["mode"] == "subscription":
+            plan_type = "pro_monthly"
+        elif session_data["mode"] == "payment":
+            # Check if this is a lifetime payment
+            if session_data.get("payment_intent"):
+                # Retrieve payment intent to check metadata
+                payment_data = stripe_service.retrieve_payment_intent(
+                    session_data["payment_intent"]
+                )
+                if (
+                    payment_data
+                    and payment_data.get("metadata", {}).get("plan_type") == "lifetime"
+                ):
+                    plan_type = "lifetime"
+
+        logger.info(
+            f"✅ Session {session_id} verified: payment_status={session_data['payment_status']}, plan_type={plan_type}"
+        )
+
+        return VerifySessionResponse(
+            success=True,
+            payment_status=session_data["payment_status"],
+            customer_email=session_data["customer_email"],
+            amount_total=session_data["amount_total"],
+            currency=session_data["currency"],
+            subscription_id=session_data["subscription"]
+            if session_data["mode"] == "subscription"
+            else None,
+            payment_intent_id=session_data["payment_intent"]
+            if session_data["mode"] == "payment"
+            else None,
+            plan_type=plan_type,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            f"❌ Error verifying session {session_id}: {str(e)}", exc_info=True
+        )
+        return VerifySessionResponse(success=False, error="Failed to verify session")
 
 
 @app.post("/api/v1/stripe/webhook", tags=["Stripe"])
@@ -8739,7 +9145,9 @@ async def stripe_webhook(request: Request):
 
         if not signature:
             logger.warning("❌ Stripe webhook: Missing signature")
-            raise HTTPException(status_code=400, detail="Missing stripe-signature header")
+            raise HTTPException(
+                status_code=400, detail="Missing stripe-signature header"
+            )
 
         # Initialize services
         from stripe_service import StripeService
@@ -8767,10 +9175,14 @@ async def stripe_webhook(request: Request):
             user_id = session.get("metadata", {}).get("user_id")
 
             if subscription_id and user_id:
-                logger.info(f"Checkout completed: subscription {subscription_id} for user {user_id}")
+                logger.info(
+                    f"Checkout completed: subscription {subscription_id} for user {user_id}"
+                )
 
                 # Get full subscription details from Stripe
-                subscription_data = stripe_service.retrieve_subscription(subscription_id)
+                subscription_data = stripe_service.retrieve_subscription(
+                    subscription_id
+                )
 
                 if subscription_data:
                     # Create subscription record in database
@@ -8780,19 +9192,35 @@ async def stripe_webhook(request: Request):
                         "stripe_customer_id": subscription_data["customer"],
                         "status": subscription_data["status"],
                         "plan_id": subscription_data["plan_id"],
-                        "current_period_start": subscription_data["current_period_start"].isoformat(),
-                        "current_period_end": subscription_data["current_period_end"].isoformat(),
-                        "cancel_at_period_end": subscription_data["cancel_at_period_end"],
-                        "canceled_at": subscription_data["canceled_at"].isoformat() if subscription_data["canceled_at"] else None,
-                        "trial_start": subscription_data["trial_start"].isoformat() if subscription_data["trial_start"] else None,
-                        "trial_end": subscription_data["trial_end"].isoformat() if subscription_data["trial_end"] else None
+                        "current_period_start": subscription_data[
+                            "current_period_start"
+                        ].isoformat(),
+                        "current_period_end": subscription_data[
+                            "current_period_end"
+                        ].isoformat(),
+                        "cancel_at_period_end": subscription_data[
+                            "cancel_at_period_end"
+                        ],
+                        "canceled_at": subscription_data["canceled_at"].isoformat()
+                        if subscription_data["canceled_at"]
+                        else None,
+                        "trial_start": subscription_data["trial_start"].isoformat()
+                        if subscription_data["trial_start"]
+                        else None,
+                        "trial_end": subscription_data["trial_end"].isoformat()
+                        if subscription_data["trial_end"]
+                        else None,
                     }
 
                     result = subscription_service.create_subscription(db_subscription)
                     if result["success"]:
-                        logger.info(f"✅ Created subscription record for user {user_id}")
+                        logger.info(
+                            f"✅ Created subscription record for user {user_id}"
+                        )
                     else:
-                        logger.error(f"❌ Failed to create subscription record: {result.get('error')}")
+                        logger.error(
+                            f"❌ Failed to create subscription record: {result.get('error')}"
+                        )
 
         elif event_type == "customer.subscription.created":
             # New subscription created
@@ -8803,10 +9231,14 @@ async def stripe_webhook(request: Request):
             # Get user_id from customer if not in metadata
             if not user_id:
                 customer_id = subscription.get("customer")
-                user_id = subscription_service.get_user_by_stripe_customer_id(customer_id)
+                user_id = subscription_service.get_user_by_stripe_customer_id(
+                    customer_id
+                )
 
             if user_id:
-                logger.info(f"Subscription created: {subscription_id} for user {user_id}")
+                logger.info(
+                    f"Subscription created: {subscription_id} for user {user_id}"
+                )
                 # Subscription will be created by checkout.session.completed
 
         elif event_type == "customer.subscription.updated":
@@ -8818,13 +9250,23 @@ async def stripe_webhook(request: Request):
 
             update_data = {
                 "status": subscription["status"],
-                "current_period_start": datetime.fromtimestamp(subscription["current_period_start"], tz=timezone.utc).isoformat(),
-                "current_period_end": datetime.fromtimestamp(subscription["current_period_end"], tz=timezone.utc).isoformat(),
+                "current_period_start": datetime.fromtimestamp(
+                    subscription["current_period_start"], tz=timezone.utc
+                ).isoformat(),
+                "current_period_end": datetime.fromtimestamp(
+                    subscription["current_period_end"], tz=timezone.utc
+                ).isoformat(),
                 "cancel_at_period_end": subscription["cancel_at_period_end"],
-                "canceled_at": datetime.fromtimestamp(subscription["canceled_at"], tz=timezone.utc).isoformat() if subscription.get("canceled_at") else None
+                "canceled_at": datetime.fromtimestamp(
+                    subscription["canceled_at"], tz=timezone.utc
+                ).isoformat()
+                if subscription.get("canceled_at")
+                else None,
             }
 
-            result = subscription_service.update_subscription(subscription_id, update_data)
+            result = subscription_service.update_subscription(
+                subscription_id, update_data
+            )
             if result["success"]:
                 logger.info(f"✅ Updated subscription {subscription_id}")
             else:
@@ -8852,18 +9294,28 @@ async def stripe_webhook(request: Request):
                 logger.info(f"Invoice paid for subscription {subscription_id}")
 
                 # Get updated subscription details
-                subscription_data = stripe_service.retrieve_subscription(subscription_id)
+                subscription_data = stripe_service.retrieve_subscription(
+                    subscription_id
+                )
 
                 if subscription_data:
                     update_data = {
                         "status": subscription_data["status"],
-                        "current_period_start": subscription_data["current_period_start"].isoformat(),
-                        "current_period_end": subscription_data["current_period_end"].isoformat()
+                        "current_period_start": subscription_data[
+                            "current_period_start"
+                        ].isoformat(),
+                        "current_period_end": subscription_data[
+                            "current_period_end"
+                        ].isoformat(),
                     }
 
-                    result = subscription_service.update_subscription(subscription_id, update_data)
+                    result = subscription_service.update_subscription(
+                        subscription_id, update_data
+                    )
                     if result["success"]:
-                        logger.info(f"✅ Updated billing period for subscription {subscription_id}")
+                        logger.info(
+                            f"✅ Updated billing period for subscription {subscription_id}"
+                        )
 
         elif event_type == "invoice.payment_failed":
             # Payment failed - mark as past_due
@@ -8873,11 +9325,11 @@ async def stripe_webhook(request: Request):
             if subscription_id:
                 logger.warning(f"⚠️  Payment failed for subscription {subscription_id}")
 
-                update_data = {
-                    "status": "past_due"
-                }
+                update_data = {"status": "past_due"}
 
-                result = subscription_service.update_subscription(subscription_id, update_data)
+                result = subscription_service.update_subscription(
+                    subscription_id, update_data
+                )
                 if result["success"]:
                     logger.info(f"✅ Marked subscription {subscription_id} as past_due")
 
@@ -8907,14 +9359,18 @@ async def stripe_webhook(request: Request):
                         "lifetime_access": True,
                         "current_period_start": payment_data["created"].isoformat(),
                         "current_period_end": None,  # No expiry for lifetime
-                        "stripe_subscription_id": f"lifetime_{payment_intent_id}"  # Placeholder for unique constraint
+                        "stripe_subscription_id": f"lifetime_{payment_intent_id}",  # Placeholder for unique constraint
                     }
 
                     result = subscription_service.create_subscription(db_subscription)
                     if result["success"]:
-                        logger.info(f"✅ Created lifetime subscription for user {user_id}")
+                        logger.info(
+                            f"✅ Created lifetime subscription for user {user_id}"
+                        )
                     else:
-                        logger.error(f"❌ Failed to create lifetime subscription: {result.get('error')}")
+                        logger.error(
+                            f"❌ Failed to create lifetime subscription: {result.get('error')}"
+                        )
 
         else:
             logger.info(f"Unhandled webhook event type: {event_type}")
@@ -8929,7 +9385,11 @@ async def stripe_webhook(request: Request):
         return {"success": False, "error": str(e)}
 
 
-@app.get("/api/v1/subscription/status", response_model=SubscriptionStatusResponse, tags=["Subscription"])
+@app.get(
+    "/api/v1/subscription/status",
+    response_model=SubscriptionStatusResponse,
+    tags=["Subscription"],
+)
 async def get_subscription_status(request: Request):
     """
     Get current user's subscription status.
@@ -8941,39 +9401,68 @@ async def get_subscription_status(request: Request):
 
         # Initialize service
         from subscription_service import SubscriptionService
+
         subscription_service = SubscriptionService()
 
         # Get user's subscription
         result = subscription_service.get_user_subscription(user_id)
 
         if not result["success"]:
-            raise HTTPException(status_code=500, detail="Failed to get subscription status")
+            raise HTTPException(
+                status_code=500, detail="Failed to get subscription status"
+            )
 
         subscription_data = result.get("data")
 
         if not subscription_data:
-            # No subscription
+            # No subscription - Free plan
             return SubscriptionStatusResponse(
                 success=True,
-                subscription=SubscriptionStatus(has_subscription=False)
+                subscription=SubscriptionStatus(has_subscription=False, plan="free"),
             )
 
         # Parse dates
-        current_period_end = datetime.fromisoformat(subscription_data["current_period_end"].replace("Z", "+00:00")) if subscription_data.get("current_period_end") else None
-        trial_end = datetime.fromisoformat(subscription_data["trial_end"].replace("Z", "+00:00")) if subscription_data.get("trial_end") else None
+        current_period_end = (
+            datetime.fromisoformat(
+                subscription_data["current_period_end"].replace("Z", "+00:00")
+            )
+            if subscription_data.get("current_period_end")
+            else None
+        )
+        trial_end = (
+            datetime.fromisoformat(
+                subscription_data["trial_end"].replace("Z", "+00:00")
+            )
+            if subscription_data.get("trial_end")
+            else None
+        )
+
+        # Determine plan based on subscription type and lifetime access
+        plan = "free"
+        if subscription_data.get("lifetime_access"):
+            plan = "lifetime"
+        elif subscription_data.get("subscription_type") == "recurring":
+            plan = "pro_monthly"
+        elif subscription_data.get("subscription_type") == "lifetime":
+            plan = "lifetime"
 
         return SubscriptionStatusResponse(
             success=True,
             subscription=SubscriptionStatus(
                 has_subscription=True,
-                subscription_type=subscription_data.get("subscription_type", "recurring"),
+                subscription_type=subscription_data.get(
+                    "subscription_type", "recurring"
+                ),
                 status=subscription_data["status"],
+                plan=plan,
                 plan_id=subscription_data["plan_id"],
                 current_period_end=current_period_end,
-                cancel_at_period_end=subscription_data.get("cancel_at_period_end", False),
+                cancel_at_period_end=subscription_data.get(
+                    "cancel_at_period_end", False
+                ),
                 trial_end=trial_end,
-                lifetime_access=subscription_data.get("lifetime_access", False)
-            )
+                lifetime_access=subscription_data.get("lifetime_access", False),
+            ),
         )
 
     except HTTPException:
@@ -8981,8 +9470,7 @@ async def get_subscription_status(request: Request):
     except Exception as e:
         logger.error(f"❌ Error getting subscription status: {str(e)}", exc_info=True)
         return SubscriptionStatusResponse(
-            success=False,
-            error="Failed to get subscription status"
+            success=False, error="Failed to get subscription status"
         )
 
 
@@ -9060,42 +9548,70 @@ async def debug_customerio():
         return {"error": str(e)}
 
 
-@app.post("/api/v1/grant-application", response_model=CreateGrantApplicationResponse, tags=["Grant Application"])
+@app.post(
+    "/api/v1/grant-application",
+    response_model=CreateGrantApplicationResponse,
+    tags=["Grant Application"],
+)
 @limiter.limit("5/hour")
 async def create_grant_application(
     grant_application: CreateGrantApplicationRequest,
     request: Request,
-    supabase: SupabaseClient = Depends(get_supabase_client) # Changed dependency
+    supabase: SupabaseClient = Depends(get_supabase_client),  # Changed dependency
 ):
     """
     Create a new grant application
     """
     try:
-        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        email_pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
         if not re.match(email_pattern, grant_application.email):
             raise HTTPException(status_code=400, detail="Invalid email format")
 
-        supabase_result = supabase_client.service_client.table("grant_applications").select("*").eq("email",
-            grant_application.email).execute()
+        supabase_result = (
+            supabase_client.service_client.table("grant_applications")
+            .select("*")
+            .eq("email", grant_application.email)
+            .execute()
+        )
 
         if supabase_result.data:
-                return JSONResponse(
-                    status_code=409,
-                    content={
-                        "success": False,
-                        "message": "Email already exists in grant application",
-                    },
-                )
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "success": False,
+                    "message": "Email already exists in grant application",
+                },
+            )
 
-        response = supabase.create_grant_application(grant_application.model_dump()) 
+        response = supabase.create_grant_application(grant_application.model_dump())
         new_application = None
         if response.get("success"):
             new_application = response.get("data")
-        
+
             print(new_application)
             # Log the successful application
-            logger.info(f"New grant application created for {grant_application.email}: {grant_application.podcast_title}")
-        # Return response using the response model
+            logger.info(
+                f"New grant application created for {grant_application.email}: {grant_application.podcast_title}"
+            )
+
+            # Add contact to Customer.io (graceful degradation - don't fail if this errors)
+            try:
+                customerio_result = customerio_client.add_grant_application_contact(
+                    email=grant_application.email,
+                    name=grant_application.name,
+                    podcast_title=grant_application.podcast_title,
+                )
+                if customerio_result.get("success"):
+                    logger.info(f"Customer.io: {customerio_result.get('message')}")
+                else:
+                    logger.warning(
+                        f"Customer.io grant application contact failed: {customerio_result.get('error')}"
+                    )
+            except Exception as cio_error:
+                # Log but don't fail the request
+                logger.error(f"Customer.io grant application error: {str(cio_error)}")
+
+            # Return response using the response model
             return CreateGrantApplicationResponse(**new_application)
 
     except HTTPException:
@@ -9103,7 +9619,10 @@ async def create_grant_application(
         raise
     except Exception as e:
         logger.error(f"Error creating grant application: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error occurred while processing your application")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error occurred while processing your application",
+        )
 
 
 # @app.post("/api/v1/admin/categorize-podcasts", tags=["Admin"])
@@ -9122,6 +9641,7 @@ async def create_grant_application(
 #         logger.error(f"Manual podcast categorization error: {str(e)}")
 #         raise HTTPException(status_code=500, detail=f"Categorization failed: {str(e)}")
 
+app.mount("/admin", admin_app)
 
 if __name__ == "__main__":
     import uvicorn
