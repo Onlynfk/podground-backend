@@ -3,9 +3,11 @@ import re
 from uuid import UUID
 from decouple import config
 
+from fastapi.responses import HTMLResponse
 from dotenv import load_dotenv
 from fastapi.staticfiles import StaticFiles
 
+from admin.orm_settings import settings as orm_settings, ROOT_DIR
 # Load environment variables FIRST before any other imports
 load_dotenv()
 
@@ -34,6 +36,7 @@ from fastapi import (
     Response,
     UploadFile,
 )
+from fastadmin.api.helpers import get_template
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from jwt.exceptions import InvalidTokenError
@@ -162,6 +165,7 @@ from user_connections_service import get_user_connections_service
 from user_listening_service import UserListeningService
 from user_profile_service import UserProfileService
 from user_settings_service import get_user_settings_service
+from pathlib import Path
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "admin.settings")
 django.setup()
@@ -191,7 +195,6 @@ def suppress_h11_errors(loop, context):
 _suppress_h11_errors = suppress_h11_errors
 
 # Removed SessionCookieMiddleware - keeping it simple
-
 # Enable debug logging for ListenNotes client temporarily
 listennotes_logger = logging.getLogger("listennotes_client")
 listennotes_logger.setLevel(logging.DEBUG)
@@ -797,6 +800,20 @@ def verify_captcha(token: str) -> bool:
     except Exception:
         return False
 
+@app.get("/admin", response_class=HTMLResponse)
+def index():
+    """This method is used to render index page.
+
+    :params request: a request object.
+    :return: A response object.
+    """
+    print('this is the root directory', ROOT_DIR)
+    return get_template(
+        ROOT_DIR / "templates" / "index.html",
+        {
+            "ADMIN_PREFIX": orm_settings.ADMIN_PREFIX,
+        },
+    )
 
 @app.get("/api/v1/ab-variant", response_model=ABVariantResponse, tags=["A/B Testing"])
 async def get_ab_variant(db: Session = Depends(get_db)):

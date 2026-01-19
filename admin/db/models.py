@@ -19,9 +19,8 @@ from fastadmin import (
     ModelAdmin,
     register,
 )
-import article_content_service
+from gotrue import Optional
 from context import get_current_user_id
-from decouple import config
 from fastadmin import (
     DashboardWidgetAdmin,
     DashboardWidgetType,
@@ -29,14 +28,14 @@ from fastadmin import (
     register_widget,
 )
 from django.db import connection
-import datetime
 from django.contrib import admin
 
-from auth_dependencies import get_current_user_from_request
 from media_service import MediaService
-from article_content_service import ArticleContentService
 
-media_service = MediaService()
+from article_content_service import ArticleContentService
+from resources_service import ResourcesService
+
+resource_service = ResourcesService()
 article_content_service = ArticleContentService()
 
 
@@ -344,12 +343,12 @@ class Message(models.Model):
 
 class Resource(models.Model):
     RESOURCE_TYPES = [
-        ("article", "Article"),
-        ("video", "Video"),
-        ("guide", "Guide"),
-        ("tool", "Tool"),
-        ("template", "Template"),
-        ("course", "Course"),
+        ("article", "article"),
+        ("video", "video"),
+        ("guide", "guide"),
+        ("tool", "tool"),
+        ("template", "template"),
+        ("course", "course"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -439,7 +438,6 @@ class AdminUser(DjangoModelAdmin):
             return None
         if not user.check_password(password):
             return None
-        print("authenticated_user", user.id)
         return user.id
 
 
@@ -578,10 +576,15 @@ class ResourceAdmin(DjangoModelAdmin):
             return payload, content_type
         return data, None
 
-    def decode_data_url(self, data_url: str) -> bytes:
+    def decode_data_url(self, data_url: str) -> tuple[Optional[str], bytes]:
         # Split by comma, the second part is the actual Base64
+        image_ext = None
         if "," in data_url:
             header, encoded = data_url.split(",", 1)
+            if header:
+                data = header.split(";")[0]
+                image_type = data.split(":")[1]
+                image_ext = image_type.split("/")[1]
         else:
             encoded = data_url
 
@@ -590,73 +593,42 @@ class ResourceAdmin(DjangoModelAdmin):
         if missing_padding:
             encoded += "=" * (4 - missing_padding)
 
-        return b64.b64decode(encoded)
-
-    async def save_model(
-        self, id: uuid.UUID | Any | None, payload: dict
-    ) -> Any:
-        """This method is used to save orm/db model object.
-
-        :params id: an id of object.
-        :params payload: a dict of payload.
-        :return: An object.
-        """
-        print("this is the payload: ", payload)
-        title = getattr(self.model_cls, "title", None)
-        is_blog = getattr(self.model_cls, "is_blog", None)
-
-        content = payload.get("content", "")
-        print(title, is_blog)
-
-        if content and len(content) == 0:
-            await article_content_service.upload_article_content(
-                title=title,
-                resource_id=self.model_cls.id,
-                author="The PodGround Team" if is_blog else "",
-                content=content,
-            )
-        elif content and len(content) > 0:
-            await article_content_service.update_article_content(
-                title=title,
-                resource_id=self.model_cls.id,
-                author="The PodGround Team",
-                content=content,
-            )
-        await super().save_model(id, payload)
+        return (image_ext, b64.b64decode(encoded))
 
     async def orm_save_upload_field(
         self, obj: Any, field: str, base64: str
     ) -> None:
         if not base64:
-            return
-        if base64.startswith("http://") or base64.startswith("https://"):
+            setattr(obj, field, base64)
+        elif base64.startswith("http://") or base64.startswith("https://"):
             setattr(obj, field, base64)
             await sync_to_async(obj.save)(update_fields=[field])
             return
-        user_id = get_current_user_id()
-        if not user_id:
-            raise RuntimeError("User context missing")
-        print("this is the user id", user_id)
-        rb = self.decode_data_url(base64)
-        # get_current_user_from_request()
+        else:
+            user_id = get_current_user_id()
+            if not user_id:
+                raise RuntimeError("User context missing")
+            ext, rb = self.decode_data_url(base64)
+            # get_current_user_from_request()
 
-        temp_file = SpooledTemporaryFile()
-        temp_file.write(rb)
-        temp_file.seek(0)
-        upload_file = UploadFile(
-            filename=f"{field}.jpg",  # choose dynamically if needed
-            file=temp_file,
-        )
+            temp_file = SpooledTemporaryFile()
+            temp_file.write(rb)
+            temp_file.seek(0)
+            file_ext = ext if ext else "jpg"
+            upload_file = UploadFile(
+                filename=f"{field}.{ext}",  # choose dynamically if needed
+                file=temp_file,
+            )
 
-        media_response = await media_service.upload_media_files(
-            [upload_file], "aa80431a-5595-4d6c-aa5d-8fc93a87af82"
-        )
-        if media_response:
-            media = media_response.get("media", None)
-            if media:
-                file_url = media[0].get("url", None)
-                setattr(obj, field, file_url)
-                await sync_to_async(obj.save)(update_fields=[field])
+            media_response = await resource_service.upload_media_files(
+                [upload_file]
+            )
+            if media_response:
+                media = media_response.get("media", None)
+                if media:
+                    file_url = media[0].get("url", None)
+                    setattr(obj, field, file_url)
+        await sync_to_async(obj.save)(update_fields=[field])
 
 
 @register(Comment)
@@ -665,7 +637,6 @@ class CommentAdmin(DjangoModelAdmin):
 
     @admin.display(description="Post User")
     def post_user(self, obj):
-        print(obj, obj.post)
         return "User"
 
 

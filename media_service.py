@@ -106,7 +106,7 @@ class MediaService:
             for file in files:
                 # Validate file
                 file_info = await self._validate_file(file)
-                print("This is the file_info: ", file_info, "file: ", file)
+                print("this is the file info", file_info)
 
                 # Generate secure storage path
                 storage_path = await self._generate_storage_path(
@@ -311,7 +311,6 @@ class MediaService:
 
             # Generate thumbnail
             thumbnail = image.copy()
-            print(thumbnail)
             thumbnail.thumbnail(self.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
 
             # Convert thumbnail to bytes
