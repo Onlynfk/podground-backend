@@ -1,4 +1,7 @@
 import os
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
 class Settings:
@@ -65,3 +68,6 @@ class Settings:
     ADMIN_DISABLE_CROP_IMAGE: bool = os.getenv(
         "ADMIN_DISABLE_CROP_IMAGE", False
     )
+
+
+settings = Settings()

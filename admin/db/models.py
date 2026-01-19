@@ -1,9 +1,15 @@
 from typing import Any, Sequence
+from asgiref.sync import sync_to_async
+from django.http.request import HttpRequest
 from django.contrib.auth.models import (
     AbstractBaseUser,
     PermissionsMixin,
     BaseUserManager,
 )
+from fastapi import UploadFile
+from tempfile import SpooledTemporaryFile
+import base64 as b64
+import io
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
 import uuid
@@ -13,7 +19,8 @@ from fastadmin import (
     ModelAdmin,
     register,
 )
-from decouple import config
+from gotrue import Optional
+from context import get_current_user_id
 from fastadmin import (
     DashboardWidgetAdmin,
     DashboardWidgetType,
@@ -21,8 +28,15 @@ from fastadmin import (
     register_widget,
 )
 from django.db import connection
-import datetime
 from django.contrib import admin
+
+from media_service import MediaService
+
+from article_content_service import ArticleContentService
+from resources_service import ResourcesService
+
+resource_service = ResourcesService()
+article_content_service = ArticleContentService()
 
 
 # general models needed
@@ -329,17 +343,18 @@ class Message(models.Model):
 
 class Resource(models.Model):
     RESOURCE_TYPES = [
-        ("article", "Article"),
-        ("video", "Video"),
-        ("guide", "Guide"),
-        ("tool", "Tool"),
-        ("template", "Template"),
-        ("course", "Course"),
+        ("article", "article"),
+        ("video", "video"),
+        ("guide", "guide"),
+        ("tool", "tool"),
+        ("template", "template"),
+        ("course", "course"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     title = models.CharField(max_length=500)
     description = models.TextField(blank=True, null=True)
+    content = models.TextField(blank=True, null=True)
     type = models.CharField(max_length=20, choices=RESOURCE_TYPES)
     url = models.URLField(blank=True, null=True)
     image_url = models.URLField(blank=True, null=True)
@@ -348,6 +363,7 @@ class Resource(models.Model):
     required_plan = models.CharField(max_length=50, default="free")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    is_blog = models.BooleanField(default=False)
 
     class Meta:
         db_table = "resources"
@@ -545,12 +561,74 @@ class ResourceAdmin(DjangoModelAdmin):
 
     list_display_links = ("title",)
     formfield_overrides = {
-        "image_url": (WidgetType.Upload, {"required": False})
+        "image_url": (WidgetType.Upload, {"required": False}),
+        "url": (WidgetType.Upload, {"required": False}),
     }
 
-    def orm_save_upload_field(self, obj, field: str, base64: str) -> None:
-        print("error")
-        pass
+    def extract_base64(self, data: str) -> tuple[str, str | None]:
+        """
+        Returns (base64_payload, content_type)
+        """
+        if data.startswith("data:"):
+            header, payload = data.split(",", 1)
+            # header looks like: data:image/png;base64
+            content_type = header.split(";")[0].replace("data:", "")
+            return payload, content_type
+        return data, None
+
+    def decode_data_url(self, data_url: str) -> tuple[Optional[str], bytes]:
+        # Split by comma, the second part is the actual Base64
+        image_ext = None
+        if "," in data_url:
+            header, encoded = data_url.split(",", 1)
+            if header:
+                data = header.split(";")[0]
+                image_type = data.split(":")[1]
+                image_ext = image_type.split("/")[1]
+        else:
+            encoded = data_url
+
+        # Fix padding if necessary
+        missing_padding = len(encoded) % 4
+        if missing_padding:
+            encoded += "=" * (4 - missing_padding)
+
+        return (image_ext, b64.b64decode(encoded))
+
+    async def orm_save_upload_field(
+        self, obj: Any, field: str, base64: str
+    ) -> None:
+        if not base64:
+            setattr(obj, field, base64)
+        elif base64.startswith("http://") or base64.startswith("https://"):
+            setattr(obj, field, base64)
+            await sync_to_async(obj.save)(update_fields=[field])
+            return
+        else:
+            user_id = get_current_user_id()
+            if not user_id:
+                raise RuntimeError("User context missing")
+            ext, rb = self.decode_data_url(base64)
+            # get_current_user_from_request()
+
+            temp_file = SpooledTemporaryFile()
+            temp_file.write(rb)
+            temp_file.seek(0)
+            file_ext = ext if ext else "jpg"
+            upload_file = UploadFile(
+                filename=f"{field}.{ext}",  # choose dynamically if needed
+                file=temp_file,
+            )
+
+            media_response = await resource_service.upload_media_files(
+                [upload_file]
+            )
+            if media_response:
+                media = media_response.get("media", None)
+                if media:
+                    file_url = media[0].get("url", None)
+                    setattr(obj, field, file_url)
+        await sync_to_async(obj.save)(update_fields=[field])
 
 
 @register(Comment)
@@ -559,7 +637,6 @@ class CommentAdmin(DjangoModelAdmin):
 
     @admin.display(description="Post User")
     def post_user(self, obj):
-        print(obj, obj.post)
         return "User"
 
 

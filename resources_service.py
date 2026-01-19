@@ -3,12 +3,17 @@ Resources Service - Handles resources, experts, and partner deals
 Implements premium video access control as specified
 """
 
+import string
+import random
+from fastapi import UploadFile, HTTPException
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 import logging
 import re
 import os
 
+from media_service import MediaService
+from models import BlogCategory
 from supabase_client import get_supabase_client
 from access_control import get_user_subscription_status
 from article_content_service import article_content_service
@@ -17,23 +22,11 @@ from action_guide_service import action_guide_service
 logger = logging.getLogger(__name__)
 
 
-class ResourcesService:
+class ResourcesService(MediaService):
     def __init__(self):
+        super().__init__()
         self.supabase_client = get_supabase_client()
         self.supabase = self.supabase_client.service_client
-
-        # Get bucket names from environment (required)
-        self.partners_bucket = os.getenv("R2_PARTNERS_BUCKET_NAME")
-        if not self.partners_bucket:
-            raise ValueError(
-                "R2_PARTNERS_BUCKET_NAME environment variable is required"
-            )
-
-        self.resources_bucket = os.getenv("R2_RESOURCES_BUCKET_NAME")
-        if not self.resources_bucket:
-            raise ValueError(
-                "R2_RESOURCES_BUCKET_NAME environment variable is required"
-            )
 
     def _generate_signed_url_from_r2_url(
         self, direct_url: Optional[str]
@@ -943,21 +936,187 @@ class ResourcesService:
                 if c.get("blog_categories")
             ]
 
+            content = await article_content_service.get_article_content(
+                row["id"]
+            )
+
             return {
                 "id": row["id"],
                 "slug": str(row["id"]),
                 "title": row["title"],
                 "summary": row["description"][:100],
-                "content": row["description"],
+                "content": content,
                 "image_url": row["image_url"],
                 "author": row["author"] or "Podground Team",
                 "created_at": row["created_at"],
                 "categories": categories,
+                "is_featured": False,
             }
 
         except Exception as e:
             raise e
 
+    async def get_all_blog_categories(self):
+        """
+        Fetches all blog categories from the database
+        """
+
+        try:
+            if not self.supabase_client.service_client:
+                logger.error(
+                    "Supabase service not available. Check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables"
+                )
+            result = (
+                self.supabase_client.service_client.table("blog_categories")
+                .select("id", "name")
+                .execute()
+            )
+
+            categories = result.data
+
+            if not categories:
+                return []
+
+            blog_categories = [
+                BlogCategory(id=item["id"], name=item["name"])
+                for item in categories
+            ]
+
+            return blog_categories
+
+        except Exception as e:
+            logger.error(
+                f"Error fetching blog categories from database: {str(e)}"
+            )
+            return []
+
+    async def upload_media_files(
+        self,
+        files: List[UploadFile],
+    ) -> Dict:
+        """
+        Upload and process multiple media files
+        Returns URLs and metadata for uploaded files
+        """
+        if not files:
+            return {"success": True, "media": []}
+
+        if len(files) > 10:  # Limit number of files per upload
+            raise HTTPException(400, "Maximum 10 files allowed per upload")
+
+        uploaded_media = []
+
+        try:
+            for file in files:
+                # Validate file
+                file_info = await self._validate_file(file)
+
+                # Generate secure storage path
+                storage_path = await self._generate_storage_path(
+                    file.filename, file_info["type"], file_info["mime_type"]
+                )
+
+                # Read file content as bytes (critical for binary integrity!)
+                file.file.seek(0)  # Ensure we're at the start
+                file_content = await file.read()
+
+                # Verify we got bytes
+                if not isinstance(file_content, bytes):
+                    raise ValueError(
+                        f"File read did not return bytes: got {type(file_content)}"
+                    )
+
+                # Log for debugging
+                if os.getenv("ENVIRONMENT") == "dev":
+                    logger.debug(
+                        f"Read {len(file_content)} bytes, first 8: {file_content[:8].hex()}"
+                    )
+
+                # Process file (resize, generate thumbnail, etc.)
+                processed_data = await self._process_media_file(
+                    file_content, file_info, storage_path
+                )
+
+                # Upload to storage
+                file_url = await self._upload_to_storage(
+                    file_content, storage_path, file_info["mime_type"]
+                )
+
+                # Upload thumbnail if generated
+                thumbnail_url = None
+                if processed_data.get("thumbnail"):
+                    thumbnail_path = storage_path.replace(".", "_thumb.")
+                    thumbnail_url = await self._upload_to_storage(
+                        processed_data["thumbnail"],
+                        thumbnail_path,
+                        "image/jpeg",
+                    )
+
+                # Store in temporary uploads table
+                # TEMPORARY WORKAROUND: Use 'image' type for documents until DB constraint is updated
+                db_file_type = file_info["type"]
+                if db_file_type == "document":
+                    db_file_type = "image"  # Temporary workaround
+                    logger.info(
+                        f"Using 'image' type for document upload (workaround for DB constraint)"
+                    )
+
+                temp_media_record = await self._store_temp_media(
+                    {
+                        "user_id": "aa80431a-5595-4d6c-aa5d-8fc93a87af82",
+                        "original_filename": file.filename,
+                        "file_url": file_url,
+                        "thumbnail_url": thumbnail_url,
+                        "file_type": db_file_type,
+                        "file_size": file_info["size"],
+                        "mime_type": file_info["mime_type"],
+                        "width": processed_data.get("width"),
+                        "height": processed_data.get("height"),
+                        "duration": processed_data.get("duration"),
+                        "storage_path": storage_path,
+                    }
+                )
+
+                uploaded_media.append(
+                    {
+                        "media_id": temp_media_record["id"],
+                        "url": file_url,
+                        "storage_path": storage_path,  # Include storage path for signed URL generation
+                        "thumbnail_url": thumbnail_url,
+                        "type": file_info["type"],
+                        "filename": file.filename,
+                        "size": file_info["size"],
+                        "width": processed_data.get("width"),
+                        "height": processed_data.get("height"),
+                        "duration": processed_data.get("duration"),
+                    }
+                )
+
+        except Exception as e:
+            logger.error(f"Media upload failed: {str(e)}")
+            # TODO: Cleanup any partially uploaded files
+            raise HTTPException(500, f"Upload failed: {str(e)}")
+
+        print(uploaded_media)
+        return {"success": True, "media": uploaded_media}
+
+    async def _generate_storage_path(
+        self, filename: str, file_type: str, mime_type: str
+    ) -> str:
+        """Generate secure, user-scoped storage path"""
+        file_directory = "articles"
+        name = string.ascii_lowercase + string.digits
+        random_file_name = "".join(random.choices(name, k=10))
+        match file_type:
+            case "image":
+                file_directory = "articles"
+            case "video":
+                file_directory = "videos"
+        try:
+            extension = mime_type.split("/")[1]
+        except IndexError:
+            extension = "jpg"
+        return f"resources/{file_directory}/{random_file_name}.{extension}"
+
 
 resources_service = ResourcesService()
-
