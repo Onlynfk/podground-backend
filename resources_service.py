@@ -93,7 +93,7 @@ class ResourcesService(MediaService):
             user_is_premium = user_subscription.get("is_premium", False)
 
             # Build query
-            query = self.supabase.table("resources").select("*")
+            query = self.supabase.table("resources").select("*").eq("is_blog", False)
 
             # Apply filters with enhanced table structure
 
