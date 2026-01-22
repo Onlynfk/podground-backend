@@ -594,6 +594,18 @@ class ResourceAdmin(DjangoModelAdmin):
             encoded += "=" * (4 - missing_padding)
 
         return (image_ext, b64.b64decode(encoded))
+    
+    async def orm_save_obj(self, id, payload):
+        content = payload.get("content", "")
+        if id:
+            if content:
+                await article_content_service.update_article_content(str(id), content)
+        else:
+            title = payload.get("title", "")
+            await article_content_service.upload_article_content(str(id), content, title)
+
+        return await super().orm_save_obj(id, payload)
+
 
     async def orm_save_upload_field(
         self, obj: Any, field: str, base64: str
@@ -616,7 +628,7 @@ class ResourceAdmin(DjangoModelAdmin):
             temp_file.seek(0)
             file_ext = ext if ext else "jpg"
             upload_file = UploadFile(
-                filename=f"{field}.{ext}",  # choose dynamically if needed
+                filename=f"{field}.{file_ext}",  # choose dynamically if needed
                 file=temp_file,
             )
 

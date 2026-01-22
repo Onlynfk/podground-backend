@@ -14,7 +14,6 @@ INSTALLED_APPS = [
     "fastadmin",
     "admin",
     "admin.db",
-    "tinymce",
 ]
 
 DB_PASSWORD = config("DB_PASSWORD")
