@@ -639,11 +639,10 @@ class ResourceAdmin(DjangoModelAdmin):
     
     async def orm_save_obj(self, id, payload):
         content = payload.get("content", "")
-        print(id)
         title = payload.get("title", "")
         if id:
             if content:
-                await article_content_service.update_article_content(str(id), content, title)
+                await article_content_service.update_article_content(str(id), content)
         else:
             await article_content_service.upload_article_content(str(id), content, title)
 
