@@ -557,6 +557,10 @@ class ResourceAdmin(DjangoModelAdmin):
         "title",
         "description",
         "is_premium",
+        "is_blog"
+    )
+    search_fields = (
+        "title"
     )
 
     list_display_links = ("title",)
@@ -564,6 +568,44 @@ class ResourceAdmin(DjangoModelAdmin):
         "image_url": (WidgetType.Upload, {"required": False}),
         "url": (WidgetType.Upload, {"required": False}),
     }
+
+    async def orm_get_list(
+        self,
+        offset: int | None = None,
+        limit: int | None = None,
+        search: str | None = None,
+        sort_by: str | None = None,
+        filters: dict | None = None,
+    ) -> tuple[list[Any], int]:
+        """This method is used to get list of orm/db model objects.
+
+        :params offset: an offset for pagination.
+        :params limit: a limit for pagination.
+        :params search: a search query.
+        :params sort_by: a sort by field name.
+        :params filters: a dict of filters.
+        :return: A tuple of list of objects and total count.
+        """
+        print(search)
+        return await super().orm_get_list()
+
+
+    async def get_list(        self,
+        offset: int | None = None,
+        limit: int | None = None,
+        search: str | None = None,
+        sort_by: str | None = None,
+        filters: dict | None = None,
+    ) -> tuple[list[Any], int]:
+        print(offset, limit, search, sort_by, filters)
+        print("This is the get list method", search)
+        return await super().get_list(
+            offset=offset,
+            limit=limit,
+            search=search,
+            sort_by=sort_by,
+            filters=filters,
+        )
 
     def extract_base64(self, data: str) -> tuple[str, str | None]:
         """
@@ -594,6 +636,19 @@ class ResourceAdmin(DjangoModelAdmin):
             encoded += "=" * (4 - missing_padding)
 
         return (image_ext, b64.b64decode(encoded))
+    
+    async def orm_save_obj(self, id, payload):
+        content = payload.get("content", "")
+        print(id)
+        title = payload.get("title", "")
+        if id:
+            if content:
+                await article_content_service.update_article_content(str(id), content, title)
+        else:
+            await article_content_service.upload_article_content(str(id), content, title)
+
+        return await super().orm_save_obj(id, payload)
+
 
     async def orm_save_upload_field(
         self, obj: Any, field: str, base64: str

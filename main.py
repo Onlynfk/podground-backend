@@ -504,9 +504,7 @@ async def user_context_middleware(request: Request, call_next):
                 admin_key,
                 algorithms=["HS256"],
             )
-            print(payload)
             token = current_user_id.set(payload.get("user_id"))
-            print(token)
         except jwt.PyJWTError:
             token = current_user_id.set(None)
 
