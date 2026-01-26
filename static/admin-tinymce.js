@@ -42,8 +42,21 @@
 
     tinymce.init({
       selector: "#content",
-      menubar: false,
+      menubar: "file edit view insert format tools table help",
       height: 300,
+      toolbar:
+        "undo redo | bold italic underline strikethrough | fontselect fontsizeselect formatselect | alignleft aligncenter alignright alignjustify | outdent indent |  numlist bullist checklist | forecolor backcolor casechange permanentpen formatpainter removeformat | pagebreak | charmap emoticons | fullscreen  preview save print | insertfile image media pageembed template link anchor codesample | a11ycheck ltr rtl | showcomments addcomment code typography",
+      // Exclude powerpaste/advcode/typography (premium) to avoid API key errors.
+      plugins:
+        "advlist autolink lists link image charmap print preview anchor searchreplace visualblocks code fullscreen insertdatetime media table help wordcount spellchecker paste fullpage",
+      valid_elements: "*[*]",
+      extended_valid_elements: "*[*]",
+      valid_children: "+body[style],+*[*]",
+      verify_html: false,
+      cleanup: false,
+      forced_root_block: "",
+      paste_as_text: false,
+      convert_urls: false,
       setup(editor) {
         editor.on("change keyup", function () {
           const textarea = editor.getElement();
