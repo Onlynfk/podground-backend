@@ -77,6 +77,7 @@ class CreatePostRequest(BaseModel):
     poll_options: Optional[List[str]] = None
     mentions: Optional[List[str]] = []  # List of user IDs
     hashtags: Optional[List[str]] = []
+    category_id: Optional[str] = None  # Optional category ID - if not provided, AI will categorize
 
     @model_validator(mode="after")
     def validate_content_or_media(self):

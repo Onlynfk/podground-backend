@@ -128,9 +128,9 @@ async def verify_refresh_results():
     service = PodcastDiscoveryService(client.service_client)
     
     print("\n🔍 Verifying refresh results...")
-    
+
     # Get a few featured podcasts to verify
-    featured = await service.get_featured_podcasts(limit=3)
+    featured, _ = await service.get_featured_podcasts(limit=3)
     
     for i, podcast in enumerate(featured, 1):
         title = podcast.get('title', 'Unknown')[:50]

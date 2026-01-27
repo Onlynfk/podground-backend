@@ -231,29 +231,34 @@ class SupabasePostsClient:
     async def create_post(self, user_id: str, post_data: Dict) -> Dict:
         """Create a new post"""
         try:
-            # Get available categories for AI categorization
-            available_categories = await self.get_available_categories()
-            
-            # Use AI to categorize the post
-            category_id = None
-            if available_categories:
-                try:
-                    from ai_categorization_service import ai_categorization
-                    category_id = await ai_categorization.categorize_post(
-                        post_data["content"], 
-                        available_categories
-                    )
-                    
-                    # Fallback to a default category if AI categorization fails
-                    if not category_id:
-                        category_id = await ai_categorization.get_fallback_category(available_categories)
-                        
-                except Exception as e:
-                    logger.warning(f"AI categorization failed, using fallback: {str(e)}")
-                    # Use first available category as fallback
-                    if available_categories:
-                        category_id = available_categories[0]["id"]
-            
+            # Check if user provided a category_id
+            category_id = post_data.get("category_id")
+
+            # If no category provided, use AI to categorize the post
+            if not category_id:
+                # Get available categories for AI categorization
+                available_categories = await self.get_available_categories()
+
+                if available_categories:
+                    try:
+                        from ai_categorization_service import ai_categorization
+                        category_id = await ai_categorization.categorize_post(
+                            post_data["content"],
+                            available_categories
+                        )
+
+                        # Fallback to a default category if AI categorization fails
+                        if not category_id:
+                            category_id = await ai_categorization.get_fallback_category(available_categories)
+
+                    except Exception as e:
+                        logger.warning(f"AI categorization failed, using fallback: {str(e)}")
+                        # Use first available category as fallback
+                        if available_categories:
+                            category_id = available_categories[0]["id"]
+            else:
+                logger.info(f"Using user-provided category_id: {category_id}")
+
             # Create post
             post = {
                 "id": str(uuid.uuid4()),
@@ -1164,7 +1169,7 @@ class SupabasePostsClient:
                 except Exception as e:
                     logger.warning(f"Failed to log comment_created activity: {str(e)}")
 
-                # Send email notification for post owner (background task)
+                # Send email notifications (background task)
                 try:
                     import asyncio
                     from background_tasks import send_activity_notification_email
@@ -1176,7 +1181,7 @@ class SupabasePostsClient:
                     if post_result.data:
                         post_owner_id = post_result.data["user_id"]
 
-                        # Don't notify if user is commenting on their own post
+                        # Notify post owner (unless they're the commenter)
                         if post_owner_id != user_id:
                             # Send email immediately as background task (non-blocking)
                             asyncio.create_task(send_activity_notification_email(
@@ -1185,8 +1190,29 @@ class SupabasePostsClient:
                                 actor_id=user_id,
                                 resource_id=post_id
                             ))
+
+                    # If this is a reply to another comment, notify the parent comment owner
+                    if parent_id:
+                        parent_comment_result = self.client.service_client.table("post_comments").select("user_id").eq("id", parent_id).single().execute()
+
+                        if parent_comment_result.data:
+                            parent_comment_owner_id = parent_comment_result.data["user_id"]
+
+                            # Don't notify if:
+                            # 1. User is replying to their own comment
+                            # 2. Parent comment owner is the post owner (already notified above)
+                            if parent_comment_owner_id != user_id and parent_comment_owner_id != post_owner_id:
+                                # Send email notification to parent comment owner
+                                asyncio.create_task(send_activity_notification_email(
+                                    user_id=parent_comment_owner_id,
+                                    notification_type=NOTIFICATION_TYPE_POST_REPLY,
+                                    actor_id=user_id,
+                                    resource_id=post_id
+                                ))
+                                logger.info(f"Sent comment reply notification to parent comment owner {parent_comment_owner_id}")
+
                 except Exception as e:
-                    logger.warning(f"Failed to send post reply notification: {str(e)}")
+                    logger.warning(f"Failed to send reply notifications: {str(e)}")
 
                 # Invalidate feed cache (application-level)
                 self.feed_cache.invalidate_via_database()

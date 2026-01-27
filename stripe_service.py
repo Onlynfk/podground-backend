@@ -245,10 +245,15 @@ class StripeService:
             logger.error("STRIPE_WEBHOOK_SECRET not configured")
             return None
 
+        # Log webhook secret prefix for debugging (first 10 chars only)
+        secret_prefix = self.webhook_secret[:10] if self.webhook_secret else "None"
+        logger.info(f"Using webhook secret starting with: {secret_prefix}...")
+
         try:
             event = stripe.Webhook.construct_event(
                 payload, signature, self.webhook_secret
             )
+            logger.info(f"✅ Webhook signature verified successfully for event: {event.get('type', 'unknown')}")
             return event
 
         except ValueError as e:
@@ -256,6 +261,8 @@ class StripeService:
             return None
         except stripe.error.SignatureVerificationError as e:
             logger.error(f"Invalid webhook signature: {str(e)}")
+            logger.error(f"Expected webhook secret prefix: {secret_prefix}...")
+            logger.error(f"Signature header: {signature[:50]}..." if signature else "No signature")
             return None
         except Exception as e:
             logger.error(f"Error verifying webhook: {str(e)}")

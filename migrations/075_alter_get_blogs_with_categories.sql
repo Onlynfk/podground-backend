@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION public.get_blogs_with_categories(
+CREATE FUNCTION public.get_blogs_with_categories(
     p_limit INT,
     p_offset INT
 )
@@ -8,10 +8,11 @@ RETURNS TABLE (
     title TEXT,
     summary TEXT,
     content TEXT,
+    image_url TEXT,
     created_at TIMESTAMPTZ,
     author TEXT,
     categories JSON,
-	is_featured BOOL
+    is_featured BOOLEAN
 )
 LANGUAGE plpgsql
 AS $$
@@ -20,15 +21,19 @@ BEGIN
     SELECT
         r.id,
         r.id::TEXT AS slug,
-        r.title,
-        r.description AS summary,
+        r.title::TEXT AS title,        
+        r.description::TEXT AS summary,      
         NULL::TEXT AS content,
+        r.image_url::TEXT AS image_url,
         r.created_at,
-        'Podground Team' AS author,
+        'Podground Team'::TEXT AS author,   
         COALESCE(
             (
                 SELECT json_agg(
-                    json_build_object('id', bc.id, 'name', bc.name)
+                    json_build_object(
+                        'id', bc.id,
+                        'name', bc.name
+                    )
                 )
                 FROM blog_resource_categories brc
                 JOIN blog_categories bc
@@ -37,7 +42,7 @@ BEGIN
             ),
             '[]'::JSON
         ),
-	r.is_featured
+        r.is_featured
     FROM resources r
     WHERE r.is_blog = TRUE
       AND r.type = 'article'
