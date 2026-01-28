@@ -523,6 +523,31 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
+@app.middleware("http")
+async def user_context_middleware(request: Request, call_next):
+    token = None
+
+    session_id = request.cookies.get("admin_session_id")
+    admin_key = config("ADMIN_SECRET_KEY", default="e238sdj9293d")
+    if session_id:
+        try:
+            payload = jwt.decode(
+                session_id,
+                admin_key,
+                algorithms=["HS256"],
+            )
+            token = current_user_id.set(payload.get("user_id"))
+        except jwt.PyJWTError:
+            token = current_user_id.set(None)
+
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        if token is not None:
+            current_user_id.reset(token)
+
+
 # Initialize clients
 customerio_client = CustomerIOClient()
 supabase_client = SupabaseClient()

@@ -81,13 +81,9 @@ format: markdown
             self.r2_client.put_object(
                 Bucket=self.r2_bucket,
                 Key=filename,
-                Body=full_content.encode('utf-8'),
-                ContentType='text/markdown',
-                Metadata={
-                    'resource-id': resource_id,
-                    'title': title,
-                    'author': author
-                }
+                Body=full_content.encode("utf-8"),
+                ContentType="text/markdown",
+                Metadata=metadata,
             )
             
             # Generate URLs
