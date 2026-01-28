@@ -145,7 +145,7 @@ class CustomerIOClient:
             logger.error(f"Customer.io Pipelines microgrant error: {type(e).__name__}: {str(e)}", exc_info=True)
             return {"success": False, "error": f"Customer.io error: {str(e)}"}
 
-    def add_grant_application_contact(self, email: str, name: str = "", podcast_title: str = "", phone_number: str = None, user_id: str = None) -> Dict[str, Any]:
+    def add_grant_application_contact(self, email: str, name: str = "", podcast_title: str = "", user_id: str = None) -> Dict[str, Any]:
         """Add a grant application contact to Customer.io using Pipelines API"""
         if not self.client:
             return {"success": False, "error": "Customer.io API credentials not configured"}
@@ -183,10 +183,6 @@ class CustomerIOClient:
             # Add podcast title if provided
             if podcast_title:
                 identify_payload["traits"]["podcast_title"] = podcast_title
-
-            # Add phone number if provided
-            if phone_number:
-                identify_payload["traits"]["phone_number"] = phone_number
 
             logger.info(f"Customer.io Pipelines: Identifying grant application user {user_id} ({email}) with traits: {identify_payload['traits']}")
 
@@ -583,25 +579,4 @@ class CustomerIOClient:
             "magic_link_url": magic_link_url
         }
         return self.send_transactional_email(message_id, email, message_data)
-
-    def send_podcast_claim_email_not_found_transactional(self, email: str, name: str = "", rss_update_url: str = "", listennotes_id: str = "") -> Dict[str, Any]:
-        """Send email notification when podcast claim fails because email not found on ListenNotes"""
-        message_id = os.getenv("CUSTOMERIO_PODCAST_CLAIM_EMAIL_NOT_FOUND_MESSAGE_ID", "podcast_claim_email_not_found")
-        message_data = {
-            "email": email,
-            "name": name,
-            "rss_update_url": rss_update_url,
-            "listennotes_id": listennotes_id
-        }
-        return self.send_transactional_email(message_id, email, message_data)
-
-    def send_podcast_email_found_transactional(self, email: str, name: str = "", onboarding_link: str = "") -> Dict[str, Any]:
-        """Send email notification when podcast owner's email becomes available on ListenNotes after a refresh request"""
-        message_id = os.getenv("CUSTOMERIO_PODCAST_EMAIL_FOUND_MESSAGE_ID", "podcast_email_found")
-        message_data = {
-            "email": email,
-            "name": name,
-            "onboarding_link": onboarding_link
-        }
-        return self.send_transactional_email(message_id, email, message_data)
-
+    

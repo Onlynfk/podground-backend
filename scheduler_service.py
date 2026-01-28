@@ -49,7 +49,7 @@ class SchedulerService:
         """Add all scheduled jobs to the scheduler"""
         
         # Import background task functions
-        from background_tasks import send_signup_reminders, send_podcast_claim_reminders, sync_signup_confirmations, sync_failed_waitlist_entries, process_event_reminders, categorize_uncategorized_podcasts, import_claimed_podcasts, refresh_featured_podcast_episodes, refresh_stale_podcast_episodes, check_podcast_refresh_logs
+        from background_tasks import send_signup_reminders, send_podcast_claim_reminders, sync_signup_confirmations, sync_failed_waitlist_entries, process_event_reminders, categorize_uncategorized_podcasts, import_claimed_podcasts, refresh_featured_podcast_episodes, refresh_stale_podcast_episodes
         
         # Job 1: Send signup reminders every hour for users who signed up 24+ hours ago
         self.scheduler.add_job(
@@ -110,25 +110,16 @@ class SchedulerService:
         #     max_instances=1
         # )
         
-        # Job 7: Categorize uncategorized podcasts using Gemini AI (configurable via cron expression)
-        # Can be disabled by setting ENABLE_PODCAST_CATEGORIZATION=false
-        enable_categorization = os.getenv('ENABLE_PODCAST_CATEGORIZATION', 'true').lower() == 'true'
-
-        if enable_categorization:
-            categorize_cron = os.getenv('CATEGORIZE_PODCASTS_CRON', '0 2 * * *')  # Default: Daily at 2:00 AM UTC
-
-            self.scheduler.add_job(
-                categorize_uncategorized_podcasts,
-                trigger=CronTrigger.from_crontab(categorize_cron),
-                id="categorize_podcasts",
-                name="Categorize Uncategorized Podcasts",
-                misfire_grace_time=600,  # 10 minutes grace time
-                coalesce=True,
-                max_instances=1
-            )
-            logger.info(f"Podcast categorization scheduled with cron: {categorize_cron}")
-        else:
-            logger.info("Podcast categorization disabled via ENABLE_PODCAST_CATEGORIZATION=false")
+        # Job 7: Categorize uncategorized podcasts once daily using Gemini AI
+        self.scheduler.add_job(
+            categorize_uncategorized_podcasts,
+            trigger=CronTrigger(hour=2, minute=0),  # Run daily at 2:00 AM UTC
+            id="categorize_podcasts",
+            name="Categorize Uncategorized Podcasts",
+            misfire_grace_time=600,  # 10 minutes grace time for daily job
+            coalesce=True,
+            max_instances=1
+        )
         
         # Job 8: Import claimed podcasts into main table (interval configurable via env var)
         import_interval_minutes = int(os.getenv('CLAIMED_PODCASTS_IMPORT_INTERVAL_MINUTES', '30'))
@@ -169,20 +160,7 @@ class SchedulerService:
         )
         logger.info(f"Stale podcast episodes refresh scheduled every {stale_refresh_hours} hours")
 
-        # Job 10: Check podcast refresh logs every 12 hours (or custom cron)
-        podcast_refresh_cron = os.getenv('PODCAST_REFRESH_CHECK_CRON', '0 */12 * * *')
-        self.scheduler.add_job(
-            check_podcast_refresh_logs,
-            trigger=CronTrigger.from_crontab(podcast_refresh_cron),
-            id="check_podcast_refresh_logs",
-            name="Check Podcast Refresh Logs",
-            misfire_grace_time=3600,  # 1 hour grace time
-            coalesce=True,
-            max_instances=1
-        )
-        logger.info(f"Check podcast refresh logs scheduled with cron: {podcast_refresh_cron}")
-
-        logger.info("Added 10 scheduled jobs: signup_reminders, podcast_claim_reminders, sync_confirmations, sync_failed_waitlist, process_event_reminders, categorize_podcasts, import_claimed_podcasts, refresh_featured_episodes, refresh_stale_episodes, check_podcast_refresh_logs")
+        logger.info("Added 9 scheduled jobs: signup_reminders, podcast_claim_reminders, sync_confirmations, sync_failed_waitlist, process_event_reminders, categorize_podcasts, import_claimed_podcasts, refresh_featured_episodes, refresh_stale_episodes")
     
     def get_job_status(self) -> dict:
         """Get status of all scheduled jobs"""

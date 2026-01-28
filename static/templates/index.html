@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<link href="{% static 'tinymce/css/prism.css' %}" rel="stylesheet">
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width,initial-scale=1" />
+	<meta name="theme-color" content="#000000" />
+	<meta name="description" content="FastAPI Admin" />
+	<title>Podground Admin</title>
+	<script>
+		window.SERVER_DOMAIN = "";
+		window.SERVER_URL = "/{{ADMIN_PREFIX}}/api";
+	</script>
+	<script defer="defer" src="/{{ADMIN_PREFIX}}/static/index.min.js"></script>
+	<link href="/{{ADMIN_PREFIX}}/static/index.min.css" rel="stylesheet" />
+</head>
+
+<body>
+	<noscript>You need to enable JavaScript to run this app.</noscript>
+	<div id="root"></div>
+</body>
+<script src="{% static 'tinymce/js/prism.js' %}"></script>
+<script src="https://cdn.tiny.cloud/1/fgwdkj7skkqthxfkcap3q09kyxozg2rjzzcfpxdzf2vmqaf2/tinymce/8/tinymce.min.js"
+	referrerpolicy="origin" crossorigin="anonymous"></script>
+
+<script src="/static/admin-tinymce.js" defer></script>
+<script src="/static/saveEditorContent.js" defer></script>
+
+</html>

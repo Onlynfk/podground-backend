@@ -37,7 +37,6 @@ from resources_service import ResourcesService
 
 resource_service = ResourcesService()
 article_content_service = ArticleContentService()
-media_service = MediaService()
 
 
 # general models needed
@@ -569,22 +568,6 @@ class ResourceAdmin(DjangoModelAdmin):
         "image_url": (WidgetType.Upload, {"required": False}),
         "url": (WidgetType.Upload, {"required": False}),
     }
-
-    async def orm_get_obj(self, id) -> Any | None:
-        qs = await super().orm_get_obj(id)
-        if not qs:
-            return None
-        # get the image and url
-        image = qs.image_url
-        url = qs.url
-        if image:
-            image_url = resource_service._generate_signed_url_from_r2_url(image)
-            qs.image_url = image_url
-        if url:
-            generated_url = resource_service._generate_signed_url_from_r2_url(url)
-            qs.url = generated_url 
-        return qs
-
 
     async def orm_get_list(
         self,
