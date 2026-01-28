@@ -9,11 +9,11 @@ import logging
 import re
 import os
 
-from models import BlogCategory
 from supabase_client import get_supabase_client
 from access_control import get_user_subscription_status
 from article_content_service import article_content_service
 from action_guide_service import action_guide_service
+from models import BlogCategory
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ class ResourcesService:
             user_is_premium = user_subscription.get("is_premium", False)
 
             # Build query
-            query = self.supabase.table("resources").select("*")
+            query = self.supabase.table("resources").select("*").eq("is_blog", False)
 
             # Apply filters with enhanced table structure
 
@@ -121,10 +121,8 @@ class ResourcesService:
             if resource_type:
                 query = query.eq("type", resource_type)
 
-            # Premium access control: articles are free, some videos are premium-only
-            if not user_is_premium:
-                query = query.eq("is_premium", False)
-            elif is_premium is not None:
+            # Filter by is_premium parameter if explicitly provided
+            if is_premium is not None:
                 query = query.eq("is_premium", is_premium)
 
             # Search functionality
@@ -160,13 +158,11 @@ class ResourcesService:
                         resource_data["user_has_access"] = False
                         resource_data["requires_premium"] = True
 
-                        # For premium content that user can't access, show teaser
+                        # For premium content that user can't access, hide video URLs
                         if resource.get("type") == "video":
                             resource_data["video_url"] = None
                             resource_data["download_url"] = None
-                            resource_data["description"] = (
-                                f"🔒 {resource_data['description'][:100]}... [Premium content - upgrade to access]"
-                            )
+                            resource_data["url"] = None  # Also hide the url field (Vimeo embed URL)
 
                     # Add content URLs for articles
                     if resource.get("type") in ["article", "guide"]:
@@ -180,10 +176,11 @@ class ResourcesService:
                         )
 
                     # Add PDF guide download URL for articles and videos
+                    # Only add if user has access (not premium content or user is premium)
                     if resource.get("type") in [
                         "article",
                         "video",
-                    ] and resource.get("download_url"):
+                    ] and resource.get("download_url") and resource_data.get("user_has_access", False):
                         # For articles, use action guide service (existing functionality)
                         if resource.get("type") == "article":
                             download_url = (
@@ -219,6 +216,8 @@ class ResourcesService:
                                     "download_url"
                                 )
 
+                    # Sign URLs - always sign image_url and thumbnail_url for display
+                    # Only sign video_url/download_url if user has access
                     if resource_data.get("user_has_access", False):
                         if resource.get("type") == "video":
                             fields_to_sign = (
@@ -233,12 +232,16 @@ class ResourcesService:
                                 "url",
                                 "download_url",
                             )
-                        for field in fields_to_sign:
-                            val = resource_data.get(field)
-                            if val:
-                                resource_data[field] = (
-                                    self._generate_signed_url_from_r2_url(val)
-                                )
+                    else:
+                        # For premium content without access, only sign preview images
+                        fields_to_sign = ("image_url", "thumbnail_url")
+
+                    for field in fields_to_sign:
+                        val = resource_data.get(field)
+                        if val:
+                            resource_data[field] = (
+                                self._generate_signed_url_from_r2_url(val)
+                            )
 
                     resources.append(resource_data)
 
@@ -277,6 +280,7 @@ class ResourcesService:
                         )
                     )
                     post["content"] = content
+                    post["is_featured"] = post.get("is_featured", False)
                     blogs.append(post)
 
                 return {
@@ -317,6 +321,7 @@ class ResourcesService:
                         )
                     )
                     post["content"] = content
+                    post["is_featured"] = post.get("is_featured", False)
                     blogs.append(post)
 
                 return {
@@ -920,6 +925,7 @@ class ResourcesService:
                 title,
                 description,
                 image_url,
+                is_featured,
                 author,
                 created_at,
                 blog_resource_categories(
@@ -943,7 +949,7 @@ class ResourcesService:
                 for c in row.get("blog_resource_categories", [])
                 if c.get("blog_categories")
             ]
-
+            
             content = await article_content_service.get_article_content(
                 row["id"]
             )
@@ -958,12 +964,12 @@ class ResourcesService:
                 "author": row["author"] or "Podground Team",
                 "created_at": row["created_at"],
                 "categories": categories,
-                "is_featured": False,
+                "is_featured": row.get("is_featured", False),
             }
 
         except Exception as e:
             raise e
-
+    
     async def get_all_blog_categories(self):
         """
         Fetches all blog categories from the database

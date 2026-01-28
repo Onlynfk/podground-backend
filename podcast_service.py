@@ -1719,11 +1719,35 @@ class PodcastDiscoveryService:
                     logger.warning(f"Podcast {podcast_id} not found in either podcasts or featured_podcasts tables")
             
             return favorite_podcasts
-            
+
         except Exception as e:
             logger.error(f"Error getting user favorite podcasts: {e}")
             return []
-    
+
+    async def get_homepage_featured_podcasts(self) -> List[Dict[str, Any]]:
+        """Get homepage featured podcasts with recent episode info"""
+        try:
+            # Get podcasts marked as homepage featured
+            featured_result = self.supabase.table('podcasts') \
+                .select('*') \
+                .eq('is_homepage_featured', True) \
+                .execute()
+
+            if not featured_result.data:
+                return []
+
+            # Enrich each featured podcast with most recent episode
+            featured_podcasts = []
+            for podcast in featured_result.data:
+                enriched_podcast = await self.enrich_podcast_with_recent_episode(podcast)
+                featured_podcasts.append(enriched_podcast)
+
+            return featured_podcasts
+
+        except Exception as e:
+            logger.error(f"Error getting homepage featured podcasts: {e}")
+            return []
+
     async def get_all_podcasts_with_claims(self, limit: int = 100, offset: int = 0, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get all podcasts from both tables with featured status and claim information"""
         try:
