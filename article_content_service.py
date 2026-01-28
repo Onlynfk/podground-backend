@@ -10,6 +10,7 @@ import logging
 import boto3
 from botocore.config import Config
 from datetime import datetime
+import unicodedata
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,12 @@ format: markdown
             full_content = metadata_header + content
             
             # Upload to R2
+            metadata = {
+                "resource-id": resource_id,
+                "title": self._sanitize_metadata_value(title),
+                "author": self._sanitize_metadata_value(author),
+            }
+
             self.r2_client.put_object(
                 Bucket=self.r2_bucket,
                 Key=filename,
@@ -258,6 +265,15 @@ format: markdown
         """
         filename = f"articles/{resource_id}/content.md"
         return f"{self.r2_public_url}/{filename}"
+
+    def _sanitize_metadata_value(self, value: str) -> str:
+        """
+        Ensure metadata values contain only ASCII characters as required by S3.
+        Non-ASCII characters are normalized and stripped.
+        """
+        normalized = unicodedata.normalize("NFKD", value or "")
+        return normalized.encode("ascii", "ignore").decode("ascii")
+
 
 # Create singleton instance
 article_content_service = ArticleContentService()
