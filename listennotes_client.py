@@ -3,6 +3,7 @@ from typing import Dict, List, Optional
 import logging
 import html
 from listennotes import podcast_api
+from security_utils import normalize_text_for_comparison
 
 logger = logging.getLogger(__name__)
 
@@ -89,20 +90,22 @@ class ListenNotesClient:
                 
                 if all_results:
                     logger.info(f"Got {len(all_results)} results from broader search, filtering for exact matches...")
-                    
-                    # Filter for exact title matches (case-insensitive)
+
+                    # Filter for exact title matches (case-insensitive, normalized)
                     exact_matches = []
-                    query_lower = query.lower().strip()
-                    
+                    normalized_query = normalize_text_for_comparison(query)
+
                     for podcast in all_results:
                         # Decode HTML entities for proper comparison (e.g., &amp; -> &)
                         title_raw = podcast.get("title_original", "")
-                        title = html.unescape(title_raw).lower().strip()
-                        if title == query_lower:
+                        title_decoded = html.unescape(title_raw)
+                        normalized_title = normalize_text_for_comparison(title_decoded)
+
+                        if normalized_title == normalized_query:
                             logger.info(f"Found exact match: '{title_raw}'")
                             exact_matches.append({
                                 "id": podcast.get("id"),
-                                "title": html.unescape(title_raw),
+                                "title": title_decoded,
                                 "description": html.unescape(podcast.get("description_original", "")),
                                 "image": podcast.get("image", ""),
                                 "publisher": html.unescape(podcast.get("publisher_original", "")),
@@ -248,4 +251,37 @@ class ListenNotesClient:
         except Exception as e:
             logger.error(f"Fetch podcast by ID failed: {str(e)}")
             return {"success": False, "error": f"Fetch podcast failed: {str(e)}"}
+
+    def refresh_podcast(self, podcast_id: str) -> Dict:
+        """Trigger ListenNotes to refresh podcast data from RSS feed"""
+        if not self.api_key:
+            return {"success": False, "error": "ListenNotes API key not configured"}
+
+        try:
+            import requests
+
+            logger.info(f"Triggering ListenNotes refresh for podcast ID: {podcast_id}")
+
+            # Make GET request to partner_tools refresh endpoint
+            url = "https://www.listennotes.com/api/partner-tools/"
+            params = {"podcast_id": podcast_id}
+            headers = {"X-ListenAPI-Key": self.api_key}
+
+            response = requests.get(url, params=params, headers=headers, timeout=30)
+
+            if response.status_code == 200:
+                logger.info(f"Successfully triggered refresh for podcast {podcast_id}")
+                return {
+                    "success": True,
+                    "message": "Podcast refresh triggered successfully",
+                    "data": response.json() if response.content else {}
+                }
+            else:
+                error_msg = f"Refresh failed with status {response.status_code}: {response.text}"
+                logger.error(error_msg)
+                return {"success": False, "error": error_msg}
+
+        except Exception as e:
+            logger.error(f"Refresh podcast failed: {str(e)}")
+            return {"success": False, "error": f"Refresh failed: {str(e)}"}
 
