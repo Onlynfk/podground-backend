@@ -46,15 +46,6 @@ TINYMCE_DEFAULT_CONFIG = {
     "resize": "false",
     "menubar": "file edit view insert format tools table help",
     "toolbar": "undo redo | bold italic underline strikethrough | fontselect fontsizeselect formatselect | alignleft aligncenter alignright alignjustify | outdent indent |  numlist bullist checklist | forecolor backcolor casechange permanentpen formatpainter removeformat | pagebreak | charmap emoticons | fullscreen  preview save print | insertfile image media pageembed template link anchor codesample | a11ycheck ltr rtl | showcomments addcomment code typography",
-    # Avoid powerpaste/advcode/typography (premium) to prevent API key errors.
-    "plugins": "advlist autolink lists link image charmap print preview anchor searchreplace visualblocks code fullscreen insertdatetime media table help wordcount spellchecker paste fullpage",
+    "plugins": "advlist autolink lists link image charmap print preview anchor searchreplace visualblocks code fullscreen insertdatetime media table powerpaste advcode help wordcount spellchecker typography",
     "selector": "textarea",
-    # Allow importing raw HTML snippets for trusted admins.
-    "valid_elements": "*[*]",
-    "extended_valid_elements": "*[*]",
-    "valid_children": "+body[style],+*[*]",
-    "verify_html": False,
-    "cleanup": False,
-    "forced_root_block": "",
-    "paste_as_text": False,
 }
