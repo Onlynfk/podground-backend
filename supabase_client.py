@@ -1106,7 +1106,7 @@ class SupabaseClient:
             "date_joined": datetime.utcnow().isoformat(),
         }
 
-        insert_res = self.service_client.table("admin_user").insert(new_admin_data).execute()
+        insert_res = self.service_client.table("admin_users").insert(new_admin_data).execute()
 
         if insert_res.data:
             logger.info(f"Admin user created for email: {email}")
