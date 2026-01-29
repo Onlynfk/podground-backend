@@ -582,7 +582,7 @@ class ResourceAdmin(DjangoModelAdmin):
     formfield_overrides = {
         "image_url": (WidgetType.Upload, {"required": False}),
         "url": (WidgetType.Upload, {"required": False}),
-        # "download_url": (WidgetType.Upload, {"required": False}),
+        "download_url": (WidgetType.Upload, {"required": False}),
     }
 
     async def orm_get_obj(self, id) -> Any | None:

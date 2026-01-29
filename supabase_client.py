@@ -1037,24 +1037,86 @@ class SupabaseClient:
             user_token=user_token,
         )
 
-    def create_admin_user(self, data):
-        """ create admin user """
-        if not self.service_client: 
+    def create_admin_user(self, email: str, password: str) -> Dict:
+        """
+        Creates a superuser based on the logic from create_superuser.py,
+        using Supabase tables.
+        """
+        if not self.service_client:
+            return {"success": False, "error": "Service client not initialized"}
+
+        try:
+            from django.contrib.auth.hashers import make_password
+            from datetime import datetime
+        except ImportError:
+            logger.error("Failed to import Django utilities for admin creation.")
             return {
                 "success": False,
-                "error": "Service client not initialized",
+                "error": "Server configuration error for admin creation.",
             }
 
-        email = data.get("email", None)
-        resp = self.service_client.table("profile").select("*").eq("email", email).execute()
+        # 1. Reject if an admin user already exists (length check).
+        # Assuming the table is named 'admins' based on the 'Admin' model.
 
-        if not resp.data:
+        admin_count_res = (
+            self.service_client.table("admin_users")
+            .select("id", count="exact")
+            .execute()
+        )
+
+        if admin_count_res.count and admin_count_res.count > 0:
+            return {"success": False, "error": "An admin user already exists."}
+
+        # 2. Check if a profile exists for the email.
+        profile_res = (
+            self.service_client.table("profiles")
+            .select("id")
+            .eq("email", email)
+            .limit(1)
+            .execute()
+        )
+        if not profile_res.data:
             return {
-                    "success": False,
-                    "error": "User does not exist"
+                "success": False,
+                "error": "A profile for this email does not exist.",
             }
-        if resp.data:
-            pass
+        profile_id = profile_res.data[0]["id"]
+
+        # 3. Check if the user is already an admin (faithful to original script's check).
+        admin_check_res = (
+            self.service_client.table("admin_users")
+            .select("id")
+            .eq("email", email)
+            .limit(1)
+            .execute()
+        )
+        if admin_check_res.data:
+            return {"success": False, "error": "This user is already an admin."}
+
+        # 4. Create the superuser record for the 'admins' table.
+        hashed_password = make_password(password)
+        new_admin_data = {
+            "id": profile_id,
+            "password": hashed_password,
+            "last_login": None,
+            "is_superuser": True,
+            "email": email,
+            "is_staff": True,
+            "is_active": True,
+            "date_joined": datetime.utcnow().isoformat(),
+        }
+
+        insert_res = self.service_client.table("admin_user").insert(new_admin_data).execute()
+
+        if insert_res.data:
+            logger.info(f"Admin user created for email: {email}")
+            return {"success": True, "message": "Admin user created successfully."}
+        else:
+            logger.error(f"Failed to insert admin user. Response: {insert_res}")
+            return {
+                "success": False,
+                "error": "Database error during admin creation.",
+            }
 
 
     def verify_podcast_claim_by_email(
@@ -3196,7 +3258,6 @@ class SupabaseClient:
 
 # Global instance and dependency function
 _supabase_client = None
-
 
 def get_supabase_client() -> SupabaseClient:
     """Get or create global Supabase client instance"""

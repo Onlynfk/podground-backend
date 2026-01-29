@@ -74,6 +74,11 @@ class AuthResponse(BaseModel):
     magic_link: Optional[str] = None
 
 
+class AdminRegistrationRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
 # Podcast Models
 class PodcastSearchResponse(BaseModel):
     id: str

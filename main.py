@@ -84,6 +84,7 @@ from media_service import MediaService
 from messages_service import MessagesService
 from models import ( 
     ABVariantResponse,
+    AdminRegistrationRequest,
     AuthResponse,
     BaseModel,
     BlogCategory,
@@ -812,16 +813,22 @@ def index():
     )
 
 
-@app.post("/register/admin")
+@app.post("/register/admin", status_code=201)
 @limiter.limit("5/minute")
-def create_admin(admin_data, request: Request):
-    if not admin_data.email or admin_data.password:
-        raise HTTPException(status_code=400, detail="Email and password required")
+def create_admin(
+    admin_data: AdminRegistrationRequest,
+    request: Request,
+    supabase_client: SupabaseClient = Depends(get_supabase_client),
+):
+    """Create a new admin user using Supabase."""
+    result = supabase_client.create_admin_user(admin_data.email, admin_data.password)
 
-    try:
-        pass
-    except:
-        pass
+    if not result["success"]:
+        error_message = result.get("error", "Failed to create admin user.")
+        status_code = 409 if "already exists" in error_message else 500
+        raise HTTPException(status_code=status_code, detail=error_message)
+
+    return {"message": result.get("message")}
 
 @app.get("/api/v1/ab-variant", response_model=ABVariantResponse, tags=["A/B Testing"])
 async def get_ab_variant(db: Session = Depends(get_db)):
