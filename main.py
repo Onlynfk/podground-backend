@@ -7,13 +7,11 @@ from fastapi.responses import HTMLResponse
 from dotenv import load_dotenv
 from fastapi.staticfiles import StaticFiles
 
+load_dotenv()
 from admin.orm_settings import settings as orm_settings, ROOT_DIR
 # Load environment variables FIRST before any other imports
-load_dotenv()
 
 # Debug: Print FRONTEND_URL to verify it's loaded
-print(f"DEBUG: FRONTEND_URL from environment: {os.getenv('FRONTEND_URL')}")
-
 import ipaddress
 import logging
 from contextlib import asynccontextmanager
@@ -84,7 +82,7 @@ from feed_cache_service import get_feed_cache_service
 from listennotes_client import ListenNotesClient
 from media_service import MediaService
 from messages_service import MessagesService
-from models import (  # Post models; Blog post models; Subscription models; Global Search models; Stripe models; Episode Listen models; Base model for new request classes
+from models import ( 
     ABVariantResponse,
     AuthResponse,
     BaseModel,
@@ -812,6 +810,18 @@ def index():
             "ADMIN_PREFIX": orm_settings.ADMIN_PREFIX,
         },
     )
+
+
+@app.post("/register/admin")
+@limiter.limit("5/minute")
+def create_admin(admin_data, request: Request):
+    if not admin_data.email or admin_data.password:
+        raise HTTPException(status_code=400, detail="Email and password required")
+
+    try:
+        pass
+    except:
+        pass
 
 @app.get("/api/v1/ab-variant", response_model=ABVariantResponse, tags=["A/B Testing"])
 async def get_ab_variant(db: Session = Depends(get_db)):

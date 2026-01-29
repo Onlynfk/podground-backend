@@ -11,6 +11,8 @@ import boto3
 from botocore.config import Config
 from datetime import datetime
 import unicodedata
+from decouple import config
+
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +20,7 @@ logger = logging.getLogger(__name__)
 class ArticleContentService:
     def __init__(self):
         """Initialize R2 client for article content storage"""
-        self.r2_bucket = os.getenv("R2_BUCKET_NAME")
+        self.r2_bucket = config("R2_BUCKET_NAME")
         if not self.r2_bucket:
             raise ValueError("R2_BUCKET_NAME environment variable is required")
 

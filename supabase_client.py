@@ -1037,6 +1037,26 @@ class SupabaseClient:
             user_token=user_token,
         )
 
+    def create_admin_user(self, data):
+        """ create admin user """
+        if not self.service_client: 
+            return {
+                "success": False,
+                "error": "Service client not initialized",
+            }
+
+        email = data.get("email", None)
+        resp = self.service_client.table("profile").select("*").eq("email", email).execute()
+
+        if not resp.data:
+            return {
+                    "success": False,
+                    "error": "User does not exist"
+            }
+        if resp.data:
+            pass
+
+
     def verify_podcast_claim_by_email(
         self, user_id: str, verification_code: str
     ) -> Dict:

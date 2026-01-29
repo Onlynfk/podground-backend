@@ -9,6 +9,8 @@ from django.contrib.auth.models import (
 from fastapi import UploadFile
 from tempfile import SpooledTemporaryFile
 import base64 as b64
+from dotenv import load_dotenv
+load_dotenv()
 import io
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
@@ -42,21 +44,23 @@ media_service = MediaService()
 
 # general models needed
 class CustomUserManager(BaseUserManager):
-    def create_user(self, email, password=None, **extra_fields):
+    def create_user(self, id, email, password=None, **extra_fields):
         if not email:
             raise ValueError("Email must be set")
         email = self.normalize_email(email)
-        user = self.model(email=email, **extra_fields)
+        user = self.model(id=id, email=email, **extra_fields)
         user.set_password(password)
+        user.save(using=self._db)
         return user
 
-    def create_superuser(self, email, password=None, **extra_fields):
+    def create_superuser(self, id, email, password=None, **extra_fields):
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
-        return self.create_user(email, password, **extra_fields)
+        return self.create_user(id, email, password, **extra_fields)
 
 
 class Admin(AbstractBaseUser):
+    id = models.UUIDField(primary_key=True, null=True, blank=True, editable=True)
     is_active = models.BooleanField(default=True)
     is_superuser = models.BooleanField(default=False)
     last_login = models.DateTimeField(null=True, blank=True)
@@ -72,6 +76,15 @@ class Admin(AbstractBaseUser):
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []
+
+class Profile(models.Model):
+    id = models.UUIDField()
+    email = models.EmailField(null=False, blank=False)
+
+    class Meta:
+        managed = False
+        db_table = "profiles"
+    
 
 
 class Event(models.Model):
@@ -365,6 +378,7 @@ class Resource(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     is_blog = models.BooleanField(default=False)
+    download_url = models.URLField(blank=True, null=True)
 
     class Meta:
         db_table = "resources"
@@ -568,6 +582,7 @@ class ResourceAdmin(DjangoModelAdmin):
     formfield_overrides = {
         "image_url": (WidgetType.Upload, {"required": False}),
         "url": (WidgetType.Upload, {"required": False}),
+        # "download_url": (WidgetType.Upload, {"required": False}),
     }
 
     async def orm_get_obj(self, id) -> Any | None:
@@ -614,8 +629,6 @@ class ResourceAdmin(DjangoModelAdmin):
         sort_by: str | None = None,
         filters: dict | None = None,
     ) -> tuple[list[Any], int]:
-        print(offset, limit, search, sort_by, filters)
-        print("This is the get list method", search)
         return await super().get_list(
             offset=offset,
             limit=limit,
@@ -676,6 +689,7 @@ class ResourceAdmin(DjangoModelAdmin):
             await sync_to_async(obj.save)(update_fields=[field])
             return
         else:
+            print(field, base64)
             user_id = get_current_user_id()
             if not user_id:
                 raise RuntimeError("User context missing")
@@ -691,8 +705,9 @@ class ResourceAdmin(DjangoModelAdmin):
                 file=temp_file,
             )
 
+            print(user_id)
             media_response = await resource_service.upload_media_files(
-                [upload_file]
+                [upload_file], user_id
             )
             if media_response:
                 media = media_response.get("media", None)

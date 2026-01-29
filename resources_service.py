@@ -993,6 +993,7 @@ class ResourcesService(MediaService):
     async def upload_media_files(
         self,
         files: List[UploadFile],
+        user_id: Optional[str]
     ) -> Dict:
         """
         Upload and process multiple media files
@@ -1063,7 +1064,7 @@ class ResourcesService(MediaService):
 
                 temp_media_record = await self._store_temp_media(
                     {
-                        "user_id": "aa80431a-5595-4d6c-aa5d-8fc93a87af82",
+                        "user_id": user_id,
                         "original_filename": file.filename,
                         "file_url": file_url,
                         "thumbnail_url": thumbnail_url,
